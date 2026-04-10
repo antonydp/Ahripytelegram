@@ -93,11 +93,14 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
             history = await chat_service.get_chat_history(db, chat_session.id)
             chat = gemini.get_chat(history=history)
 
-            async for chunk in gemini.send_image_stream(prompt, image, chat):
-                full_response += chunk
-                if time.time() - last_update_time > update_interval:
-                    await telegram_service.send_message_draft(chat_id=chat_id, draft_id=draft_id, text=full_response)
-                    last_update_time = time.time()
+            if is_group:
+                full_response = await gemini.send_image(prompt, image, chat)
+            else:
+                async for chunk in gemini.send_image_stream(prompt, image, chat):
+                    full_response += chunk
+                    if time.time() - last_update_time > update_interval:
+                        await telegram_service.send_message_draft(chat_id=chat_id, draft_id=draft_id, text=full_response)
+                        last_update_time = time.time()
 
             response_text = full_response
             await chat_service.add_message(db, chat_session.id, prompt, message_obj.date, "user")
@@ -106,11 +109,14 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
             chat = gemini.get_chat(history=await chat_service.get_chat_history(db, chat_session.id))
             prompt = message_obj.text.replace(f"@{bot_user.username}", "").strip() if message_obj.text else ""
 
-            async for chunk in gemini.send_message_stream(prompt, chat):
-                full_response += chunk
-                if time.time() - last_update_time > update_interval:
-                    await telegram_service.send_message_draft(chat_id=chat_id, draft_id=draft_id, text=full_response)
-                    last_update_time = time.time()
+            if is_group:
+                full_response = await gemini.send_message(prompt, chat)
+            else:
+                async for chunk in gemini.send_message_stream(prompt, chat):
+                    full_response += chunk
+                    if time.time() - last_update_time > update_interval:
+                        await telegram_service.send_message_draft(chat_id=chat_id, draft_id=draft_id, text=full_response)
+                        last_update_time = time.time()
 
             response_text = full_response
             await chat_service.add_message(db, chat_session.id, prompt, message_obj.date, "user")
