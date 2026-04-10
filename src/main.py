@@ -90,7 +90,7 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
         if message_obj.photo:
             image = await telegram_service.get_image_from_message(message_obj)
-            raw_prompt = message_obj.caption or "Describe this image in detail."
+            raw_prompt = message_obj.caption or "sent you this image."
             raw_prompt = raw_prompt.replace(f"@{bot_user.username}", "").strip()
             prompt = f"{user_name}: {raw_prompt}"
 
@@ -109,7 +109,7 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
                 return 'OK'
 
             audio_bytes, mime_type = audio_data
-            raw_prompt = message_obj.caption or "Listen carefully to this audio and respond."
+            raw_prompt = message_obj.caption or "sent you this audio"
             raw_prompt = raw_prompt.replace(f"@{bot_user.username}", "").strip()
             prompt = f"{user_name}: {raw_prompt}"
 
