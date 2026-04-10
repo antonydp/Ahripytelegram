@@ -1,3 +1,4 @@
+import time
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Request
@@ -37,60 +38,86 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
         telegram_update = Update.de_json(request.body, telegram_service._telegram_app_bot)
 
-        chat_id = telegram_update.message.chat_id
+        message_obj = telegram_update.message or telegram_update.edited_message or telegram_update.channel_post or telegram_update.edited_channel_post
+        if not message_obj:
+            return 'OK'
 
-        
+        chat_id = message_obj.chat_id
+        is_group = message_obj.chat.type in ['group', 'supergroup']
+
         webhook_secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
 
         if(telegram_service.is_secure_webhook_enabled() and telegram_service.is_secure_webhook_token_valid(webhook_secret_token) is False):
             await telegram_service.send_unauthorized_message(chat_id=chat_id)
             return 'OK'
         
-        chat_service = ChatService()
+        # In groups, only respond to mentions or replies to the bot
+        bot_user = await telegram_service.get_me()
+        if is_group:
+            is_mentioned = False
+            message_text = message_obj.text or message_obj.caption or ""
+            if f"@{bot_user.username}" in message_text:
+                is_mentioned = True
+            elif message_obj.reply_to_message and message_obj.reply_to_message.from_user.id == bot_user.id:
+                is_mentioned = True
 
+            if not is_mentioned:
+                return 'OK'
+
+        chat_service = ChatService()
         chat_session = await chat_service.get_or_create_session(db, chat_id)
 
         if telegram_update.edited_message:
             # Handle edited message
             return 'OK'
-        elif telegram_update.message.text == TelegramBotCommands.START:
+        elif message_obj.text == TelegramBotCommands.START:
             await telegram_service.send_start_message(chat_id=chat_id)
             return 'OK'
-        elif telegram_update.message.text == TelegramBotCommands.NEW_CHAT:
+        elif message_obj.text == TelegramBotCommands.NEW_CHAT:
             await chat_service.clear_chat_history(db, chat_session.id)
             await telegram_service.send_new_chat_message(chat_id=chat_id)
             return 'OK'
         
-        message = await telegram_service.send_message(chat_id=chat_id, text="Processing your request...")
-
         response_text = ""
+        draft_id = message_obj.message_id
+        full_response = ""
         
-        if telegram_update.message.photo:
-            image = await telegram_service.get_image_from_message(telegram_update.message)
+        last_update_time = time.time()
+        update_interval = 0.5 # Update every 0.5 seconds
 
-            prompt = "Describe this image in detail."
-
-            if telegram_update.message.caption:
-                prompt = telegram_update.message.caption
-
+        if message_obj.photo:
+            image = await telegram_service.get_image_from_message(message_obj)
+            raw_prompt = message_obj.caption or "Describe this image in detail."
+            prompt = raw_prompt.replace(f"@{bot_user.username}", "").strip()
 
             history = await chat_service.get_chat_history(db, chat_session.id)
             chat = gemini.get_chat(history=history)
 
-            response_text = await gemini.send_image(prompt, image, chat)
+            async for chunk in gemini.send_image_stream(prompt, image, chat):
+                full_response += chunk
+                if time.time() - last_update_time > update_interval:
+                    await telegram_service.send_message_draft(chat_id=chat_id, draft_id=draft_id, text=full_response)
+                    last_update_time = time.time()
 
-            await chat_service.add_message(db, chat_session.id, prompt, telegram_update.message.date, "user")
-            await chat_service.add_message(db, chat_session.id, response_text, telegram_update.message.date, "model")
+            response_text = full_response
+            await chat_service.add_message(db, chat_session.id, prompt, message_obj.date, "user")
+            await chat_service.add_message(db, chat_session.id, response_text, message_obj.date, "model")
         else:
             chat = gemini.get_chat(history=await chat_service.get_chat_history(db, chat_session.id))
+            prompt = message_obj.text.replace(f"@{bot_user.username}", "").strip() if message_obj.text else ""
 
-            response_text = await gemini.send_message(telegram_update.message.text, chat)
+            async for chunk in gemini.send_message_stream(prompt, chat):
+                full_response += chunk
+                if time.time() - last_update_time > update_interval:
+                    await telegram_service.send_message_draft(chat_id=chat_id, draft_id=draft_id, text=full_response)
+                    last_update_time = time.time()
 
-            await chat_service.add_message(db, chat_session.id, telegram_update.message.text, telegram_update.message.date, "user")
-            await chat_service.add_message(db, chat_session.id, response_text, telegram_update.message.date, "model")
+            response_text = full_response
+            await chat_service.add_message(db, chat_session.id, prompt, message_obj.date, "user")
+            await chat_service.add_message(db, chat_session.id, response_text, message_obj.date, "model")
 
-        #Add support to markdown v2
-        await telegram_service.update_message(chat_id=chat_id, message_id=message.message_id, text=response_text)
+        # Send final message to settle the draft
+        await telegram_service.send_message(chat_id=chat_id, text=response_text, reply_to_message_id=message_obj.message_id)
         return 'OK' 
     except Exception as error:
         print(f"Error Occurred: {error}")
