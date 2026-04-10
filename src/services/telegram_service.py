@@ -8,10 +8,16 @@ from PIL import Image
 
 class TelegramService:
     _telegram_app_bot = None
+    _bot_user = None
 
     def __init__(self):
         self._telegram_app_bot = ApplicationBuilder().token(getenv('TELEGRAM_BOT_TOKEN')).build().bot
         pass
+
+    async def get_me(self):
+        if not self._bot_user:
+            self._bot_user = await self._telegram_app_bot.get_me()
+        return self._bot_user
 
     def is_secure_webhook_enabled(self) -> bool:
         """Check if secure webhook is enabled.
@@ -66,16 +72,26 @@ class TelegramService:
         await self.send_message(chat_id=chat_id, text="New chat started. How can I assist you?")
 
     
-    async def send_message(self, chat_id: int, text: str) -> Coroutine[Message]:
+    async def send_message(self, chat_id: int, text: str, **kwargs) -> Coroutine[Message]:
         """Send a message to the user.
 
         Args:
             chat_id: The chat ID to send the message to.
             text: The message text content.
         """
-        return await self._telegram_app_bot.send_message(chat_id=chat_id, text=text)
+        return await self._telegram_app_bot.send_message(chat_id=chat_id, text=text, **kwargs)
+
+    async def send_message_draft(self, chat_id: int, draft_id: int, text: str, **kwargs) -> bool:
+        """Send a message draft to the user (streaming).
+
+        Args:
+            chat_id: The chat ID to send the message to.
+            draft_id: Unique identifier of the message draft.
+            text: The message text content.
+        """
+        return await self._telegram_app_bot.send_message_draft(chat_id=chat_id, draft_id=draft_id, text=text, **kwargs)
     
-    async def update_message(self, chat_id: int, message_id: int, text: str) -> Coroutine[Message]:
+    async def update_message(self, chat_id: int, message_id: int, text: str, **kwargs) -> Coroutine[Message]:
         """Update a message for the user.
 
         Args:
@@ -83,7 +99,7 @@ class TelegramService:
             message_id: The message ID to update.
             text: The new message text content.
         """
-        return await self._telegram_app_bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
+        return await self._telegram_app_bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, **kwargs)
     
     async def get_image_from_message(self, message: Message) -> Image.Image | None:
         """Retrieve the image file bytes from a Telegram message.
