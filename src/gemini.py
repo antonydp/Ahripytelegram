@@ -68,9 +68,7 @@ class Gemini:
         function_call = function_request.candidates[0].content.parts[0].function_call
 
         if not function_call:
-            chat.history.pop()
-            response = await chat.send_message(prompt)
-            return response.text
+            return function_request.text
 
         function_response = await self.__plugin_manager.get_function_response(function_call, chat)
 
