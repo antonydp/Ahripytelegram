@@ -118,3 +118,25 @@ class TelegramService:
             image = Image.open(bytesIO)
             return image
         return None
+
+    async def get_audio_from_message(self, message: Message) -> tuple[bytes, str] | None:
+        """Retrieve the audio file bytes and MIME type from a Telegram message.
+
+        Args:
+            message: The Telegram message object.
+        Returns:
+            A tuple of (bytes, mime_type) if available, None otherwise.
+        """
+        audio_obj = None
+        if message.voice:
+            audio_obj = message.voice
+        elif message.audio:
+            audio_obj = message.audio
+
+        if audio_obj:
+            file_id = audio_obj.file_id
+            mime_type = audio_obj.mime_type or ("audio/ogg" if message.voice else "audio/mpeg")
+            file = await self._telegram_app_bot.get_file(file_id)
+            bytes_array = await file.download_as_bytearray()
+            return bytes(bytes_array), mime_type
+        return None

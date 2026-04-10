@@ -48,14 +48,9 @@ class Gemini:
             system_instruction=self.__system_instruction
         )
 
-    def get_chat(self, history: list, user_name: str = None) -> AsyncChat:
-        config = self.__generation_config
-        if user_name:
-            # Integra il nome dell'utente nel contesto mantenendo le istruzioni di Ahri
-            system_instruction = self.__system_instruction + f"\nStai parlando con {user_name}. Rivolgiti a lui/lei se necessario, ma resta Ahri."
-            config = self.__generation_config.model_copy(update={
-                "system_instruction": system_instruction
-            })
+    def get_chat(self, history: list, user_name: str = "User") -> AsyncChat:
+        config = self.__generation_config.model_copy()
+        config.system_instruction += f"\n\nStai parlando con {user_name}."
 
         return self.__client.chats.create(
             model=self.__model_name,
@@ -98,6 +93,20 @@ class Gemini:
     async def send_image(prompt: str, image: PIL.Image, chat: AsyncChat) -> str:
         response = await chat.send_message([prompt, image])
         print("Image response: " + response.text)
+        return response.text
+
+    @staticmethod
+    async def send_audio_stream(prompt: str, audio_bytes: bytes, mime_type: str, chat: AsyncChat):
+        audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+        async for chunk in await chat.send_message_stream([prompt, audio_part]):
+            if chunk.text:
+                yield chunk.text
+
+    @staticmethod
+    async def send_audio(prompt: str, audio_bytes: bytes, mime_type: str, chat: AsyncChat) -> str:
+        audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+        response = await chat.send_message([prompt, audio_part])
+        print("Audio response: " + response.text)
         return response.text
 
     @classmethod
