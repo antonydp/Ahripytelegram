@@ -81,6 +81,6 @@ async def test_get_chat_with_user_name():
     # Assert
     mock_aio_client.chats.create.assert_called_once()
     args, kwargs = mock_aio_client.chats.create.call_args
-    assert kwargs['model'] == "gemini-2.5-flash"
+    assert kwargs['model'] == "gemini-3.1-flash-lite-preview"
     assert kwargs['history'] == mock_history
     assert "Mario" in kwargs['config'].system_instruction

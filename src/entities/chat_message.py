@@ -1,6 +1,6 @@
 """ChatMessage entity."""
 
-from sqlalchemy import Column, Integer, Text, DateTime, String, ForeignKey
+from sqlalchemy import Column, Integer, Text, DateTime, String, ForeignKey, BigInteger
 from sqlalchemy.orm import relationship
 
 from .base import Base
@@ -12,6 +12,7 @@ class ChatMessage(Base):
     
     id = Column(Integer, primary_key=True)
     chat_id = Column(Integer, ForeignKey('chat_session.id'), nullable=False)
+    user_id = Column(BigInteger, nullable=True)
     text = Column(Text)
     date = Column(DateTime(timezone=True))  # Supports timezone-aware datetimes
     role = Column(String(20))

@@ -24,14 +24,16 @@ class ChatService:
         """
         self._max_history_messages = max_history_messages or Config.MAX_HISTORY_MESSAGES
     
-    async def get_chat_history(self, db: AsyncSession, session_id: int, limit: int = None) -> list[dict]:
+    async def get_chat_history(self, db: AsyncSession, session_id: int, limit: int = None, current_user_id: int = None) -> list[dict]:
         """
         Retrieve chat history for a session, limited to the most recent N messages.
+        If current_user_id is provided, also retrieve messages from the user's private session.
         
         Args:
             db: Async database session.
             session_id: The chat session ID to retrieve messages for.
             limit: Maximum number of messages to retrieve. Defaults to instance limit.
+            current_user_id: Optional Telegram user ID to fetch shared history from private chat.
         
         Returns:
             List of message dicts formatted for Gemini API, in chronological order.
@@ -42,26 +44,53 @@ class ChatService:
         if limit < 0:
             raise ValueError("limit must be non-negative")
         
-        # Query messages ordered by date descending, limited to N
+        # Get the current session to check if it's a private chat
+        session_result = await db.execute(select(ChatSession).where(ChatSession.id == session_id))
+        current_session = session_result.scalar_one_or_none()
+
+        # Determine additional sessions to fetch history from (Shared Memory)
+        session_ids = [session_id]
+        private_session_id = None
+
+        if current_user_id:
+            # Check if current_user_id has a private session
+            private_result = await db.execute(
+                select(ChatSession).where(ChatSession.chat_id == current_user_id)
+            )
+            private_session = private_result.scalar_one_or_none()
+            if private_session and private_session.id != session_id:
+                session_ids.append(private_session.id)
+                private_session_id = private_session.id
+
+        # Query messages from relevant sessions ordered by date descending, limited to N
         result = await db.execute(
-            select(ChatMessage)
-            .where(ChatMessage.chat_id == session_id)
+            select(ChatMessage, ChatSession.chat_id.label('session_chat_id'))
+            .join(ChatSession, ChatMessage.chat_id == ChatSession.id)
+            .where(ChatMessage.chat_id.in_(session_ids))
             .order_by(ChatMessage.date.desc())
             .limit(limit)
         )
-        messages = result.scalars().all()
+        rows = result.all()
         
         # Reverse to chronological order and format for Gemini API
         history = []
-        for message in reversed(messages):
+        for row in reversed(rows):
+            message = row.ChatMessage
+            session_chat_id = row.session_chat_id
+
+            text = message.text
+            # Add context tag if it's from a private chat and we are in a group, or vice-versa
+            if private_session_id and message.chat_id == private_session_id:
+                text = f"[Da chat privata con l'utente] {text}"
+
             history.append({
                 "role": message.role,
-                "parts": [{"text": message.text}]
+                "parts": [{"text": text}]
             })
         
         return history
     
-    async def add_message(self, db: AsyncSession, session_id: int, text: str, date: datetime, role: str) -> ChatMessage:
+    async def add_message(self, db: AsyncSession, session_id: int, text: str, date: datetime, role: str, user_id: int = None) -> ChatMessage:
         """
         Add a message to a chat session.
         
@@ -71,6 +100,7 @@ class ChatService:
             text: The message text content.
             date: The datetime of the message.
             role: The role of the sender ('user' or 'model').
+            user_id: Optional Telegram user ID who sent the message.
         
         Returns:
             The created ChatMessage instance.
@@ -79,7 +109,8 @@ class ChatService:
             chat_id=session_id,
             text=text,
             date=date,
-            role=role
+            role=role,
+            user_id=user_id
         )
         db.add(chat_message)
         await db.commit()

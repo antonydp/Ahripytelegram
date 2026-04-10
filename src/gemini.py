@@ -48,7 +48,7 @@ class Gemini:
             system_instruction=self.__system_instruction
         )
 
-    def get_chat(self, history: list, user_name: str = "User") -> AsyncChat:
+    def get_chat(self, history: list, user_name: str = "User", chat_type: str = "private", chat_title: str = None) -> AsyncChat:
         config = self.__generation_config.model_copy()
         
         # Contestualizza con chi sta parlando in modo che sappia subito se è Manuel, Antony o altri.
@@ -58,6 +58,14 @@ class Gemini:
             config.system_instruction += f"\n\nORA STAI PARLANDO CON IL TUO FIDANZATO, ANTONY (@Antonydpk). Sii dolce, innamorata e provocante."
         else:
             config.system_instruction += f"\n\nStai parlando con {user_name}."
+
+        # Aggiunge contesto sulla chat corrente (Privata o Gruppo)
+        if chat_type in ['group', 'supergroup']:
+            group_info = f" nel gruppo '{chat_title}'" if chat_title else " in un gruppo"
+            config.system_instruction += f"\nSei{group_info}. Ricorda che in gruppo i tuoi messaggi sono visibili a tutti, ma mantieni comunque il tuo stile naturale e giocoso."
+            config.system_instruction += f"\nIMPORTANTE: Potresti vedere messaggi taggati con '[Da chat privata con l'utente]'. Questi sono messaggi che l'utente ti ha inviato in privato e che ti forniamo come contesto per avere una memoria condivisa."
+        else:
+            config.system_instruction += f"\nSei in una chat privata con {user_name}."
 
         return self.__client.chats.create(
             model=self.__model_name,

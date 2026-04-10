@@ -42,7 +42,10 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
             return 'OK'
 
         chat_id = message_obj.chat_id
-        is_group = message_obj.chat.type in ['group', 'supergroup']
+        chat_type = message_obj.chat.type
+        chat_title = message_obj.chat.title
+        is_group = chat_type in ['group', 'supergroup']
+        user_id = message_obj.from_user.id if message_obj.from_user else None
 
         webhook_secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
 
@@ -85,8 +88,8 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
         prompt = ""
         full_response = ""
 
-        history = await chat_service.get_chat_history(db, chat_session.id)
-        chat = gemini.get_chat(history=history, user_name=user_name)
+        history = await chat_service.get_chat_history(db, chat_session.id, current_user_id=user_id)
+        chat = gemini.get_chat(history=history, user_name=user_name, chat_type=chat_type, chat_title=chat_title)
 
         if message_obj.photo:
             image = await telegram_service.get_image_from_message(message_obj)
@@ -134,8 +137,8 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
                         await telegram_service.send_message_draft(chat_id=chat_id, draft_id=message_obj.message_id, text=full_response)
                         last_update_time = time.time()
 
-        await chat_service.add_message(db, chat_session.id, prompt, message_obj.date, "user")
-        await chat_service.add_message(db, chat_session.id, full_response, message_obj.date, "model")
+        await chat_service.add_message(db, chat_session.id, prompt, message_obj.date, "user", user_id=user_id)
+        await chat_service.add_message(db, chat_session.id, full_response, message_obj.date, "model", user_id=None)
 
         # Send final message to settle the draft
         await telegram_service.send_message(chat_id=chat_id, text=full_response, reply_to_message_id=message_obj.message_id)
