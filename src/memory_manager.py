@@ -54,9 +54,22 @@ if MEM0_ENABLED:
             "llm": {
                 "provider": "gemini",
                 "config": {
-                    "model": "gemma-4-26b-a4b-it",
+                    "model": "gemini-1.5-flash",
                     "api_key": os.getenv("GEMINI_API_KEY"),
                     "temperature": 0.1,
+                    "custom_fact_extraction_prompt": """
+                    Agisci come il diario segreto di Ahri. Analizza la conversazione e salva SOLO informazioni cruciali, fatti concreti o preferenze importanti.
+
+                    REGOLE RIGIDE:
+                    1. Salva SOLO fatti reali: segreti, accordi, prezzi, password, date, preferenze o eventi significativi.
+                    2. Ignora TUTTO il resto: chiacchiere, saluti, complimenti, poesie, frasi d'amore, metafore o roleplay.
+                    3. Scrivi una sola frase per ogni fatto, iniziando SEMPRE con il nome del soggetto interessato (es: "@username ha detto che...").
+                    4. Non usare mai la parola "utente".
+                    5. Se non ci sono informazioni importanti da salvare, non produrre alcun output (ritorna un array vuoto di fatti).
+
+                    Rispondi rigorosamente in formato JSON:
+                    {"facts": ["frase 1", "frase 2"]}
+                    """
                 }
             },
             "embedder": {
