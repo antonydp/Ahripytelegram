@@ -1,4 +1,10 @@
 import os
+
+# mem0 tries to create a .mem0 directory in the home folder by default.
+# On Vercel, the home folder is read-only. We point it to /tmp which is writable.
+if not os.environ.get("MEM0_DIR"):
+    os.environ["MEM0_DIR"] = "/tmp/.mem0"
+
 from mem0 import Memory
 
 # mem0 usa Gemini sia per capire i fatti che per gli embedding
