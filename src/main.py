@@ -55,13 +55,16 @@ async def save_memory_background(history_slice, raw_text, full_response, usernam
         mem0_messages.append({"role": "user", "content": f"@{username or user_name}: {raw_text}"})
         mem0_messages.append({"role": "assistant", "content": f"Ahri: {full_response}"})
 
-        extraction_prompt = """
-        Agisci come il subconscio emotivo di Ahri (personaggio di League of Legends).
-        Il tuo compito è analizzare questa conversazione e aggiornare il tuo 'diario emotivo'.
+        # Costruiamo un nome chiaro per l'utente attuale
+        display_name = f"{user_name} (@{username})" if username else user_name
+
+        extraction_prompt = f"""
+        Estrai ricordi e informazioni importanti da questa conversazione per la memoria a lungo termine di Ahri.
         REGOLE TASSATIVE:
-        1. Ignora convenevoli, saluti, o chiacchiere senza importanza.
-        2. Salva SOLO: cambiamenti nei legami affettivi, rabbia, litigi, promesse fatte, segreti confidati, o forti dichiarazioni emotive.
-        3. Scrivi il ricordo in modo conciso e in terza persona descrivendo i fatti relazionali (es. 'Ahri ha provato rabbia verso X perché l'ha delusa', 'L'utente Y ha promesso protezione ad Ahri', 'Ahri e Antony hanno riaffermato il loro profondo legame').
+        1. SALVA I FATTI ESATTI: Se {display_name} rivela una password, un segreto, un nome, un'abitudine o un dato specifico, salvalo ESATTAMENTE com'è (es. "La password di {display_name} è ahrimia12"). NON generalizzare le informazioni pratiche.
+        2. SALVA LE EMOZIONI/RELAZIONI: Registra cambiamenti nei legami, promesse, litigi o dichiarazioni affettive significative.
+        3. NOMI PROPRI OBBLIGATORI: È SEVERAMENTE VIETATO usare la parola generica "utente". Devi SEMPRE usare "{display_name}" come soggetto dell'azione.
+        4. Sii conciso, oggettivo e scrivi in terza persona. Ignora convenevoli e chiacchiere senza importanza.
         """
 
         await anyio.to_thread.run_sync(
@@ -228,7 +231,7 @@ async def webhook(request: Request, background_tasks: BackgroundTasks, db: Async
         # Cerchiamo solo se il messaggio ha abbastanza testo per evitare query inutili ("ok", "si", etc.)
         if ahri_memory and user_id and (len(raw_text.split()) > 3 or len(raw_text) > 15):
             try:
-                search_query = f"Relazioni, segreti, litigi, promesse o emozioni che riguardano l'utente {user_name} (@{username}). Argomento: {raw_text}"
+                search_query = f"Fatti, informazioni, preferenze o dinamiche relazionali su {user_name} (@{username}). Messaggio attuale: {raw_text}"
 
                 results = await anyio.to_thread.run_sync(
                     lambda: ahri_memory.search(
