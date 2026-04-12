@@ -168,10 +168,18 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
             try:
                 search_query = raw_text
 
-                # Se l'utente risponde con una frase corta, uniamo l'ultima frase di Ahri per dare contesto alla ricerca
-                if len(raw_text.split()) < 4 and history:
-                    last_ahri_msg = history[-1]["parts"][0]["text"]
-                    search_query = f"Contesto: {last_ahri_msg} - Risposta utente: {raw_text}"
+                # Se l'utente risponde con una frase corta, cerchiamo di dare contesto alla ricerca
+                if len(raw_text.split()) < 4:
+                    context_text = ""
+                    # Se è una risposta a un messaggio specifico, usiamo quello come contesto
+                    if message_obj.reply_to_message:
+                        context_text = message_obj.reply_to_message.text or message_obj.reply_to_message.caption or ""
+                    # Altrimenti usiamo l'ultimo messaggio della cronologia come fallback
+                    elif history:
+                        context_text = history[-1]["parts"][0]["text"]
+
+                    if context_text:
+                        search_query = f"Contesto: {context_text} - Risposta utente: {raw_text}"
 
                 # cerca i 5 ricordi più rilevanti per questa frase
                 results = await anyio.to_thread.run_sync(
