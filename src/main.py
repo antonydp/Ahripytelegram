@@ -169,7 +169,7 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
                 search_query = raw_text
 
                 # Se l'utente risponde con una frase corta, cerchiamo di dare contesto alla ricerca
-                if len(raw_text.split()) < 4:
+                if len(raw_text.split()) < 13:
                     context_text = ""
                     # Se è una risposta a un messaggio specifico, usiamo quello come contesto
                     if message_obj.reply_to_message:
