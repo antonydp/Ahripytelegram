@@ -56,9 +56,7 @@ class ChatService:
         for message in reversed(messages):
             history.append({
                 "role": message.role,
-                "parts": [{"text": message.text}],
-                "user_id": message.user_id,
-                "username": message.username
+                "parts": [{"text": message.text}]
             })
         
         return history
