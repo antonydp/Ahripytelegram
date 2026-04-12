@@ -141,33 +141,25 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
         # Remove the last message from history because send_message will add it again
         if history:
             history.pop()
-
         # --- MEMORIA CONDIVISA MEM0 ---
         memory_context = ""
         if user_id:
             try:
-                raw_results = await anyio.to_thread.run_sync(
+                # cerca i 5 ricordi più rilevanti per questa frase
+                results = await anyio.to_thread.run_sync(
                     lambda: ahri_memory.search(
                         query=raw_text,
                         user_id=str(user_id),
                         limit=5
                     )
                 )
-        # gestisce sia v1.0 (lista) sia v1.1 (dict)
-                if isinstance(raw_results, dict):
-                    memories = raw_results.get("results", [])
-                else:
-                    memories = raw_results or []
-
-                if memories:
-                    memory_context = "\n".join(
-                        f"- {m.get('memory', '')}"
-                        for m in memories
-                        if m.get("memory")
-                    )
+                if results:
+                    # In newer mem0ai versions, search returns a dict like {'results': [...]}
+                    mem_list = results.get("results",[]) if isinstance(results, dict) else results
+                    memory_context = "\n".join([f"- {m['memory']}" for m in mem_list if isinstance(m, dict) and 'memory' in m])
             except Exception as e:
                 print(f"Mem0 search error: {e}")
-                chat = gemini_chat.get_chat(history=history, user_name=user_name, memory_context=memory_context)
+
 
         if message_obj.photo:
             image = await telegram_service.get_image_from_message(message_obj)
