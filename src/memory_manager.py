@@ -56,8 +56,9 @@ if MEM0_ENABLED:
                 "config": {
                     "model": "gemma-4-26b-a4b-it",
                     "api_key": os.getenv("GEMINI_API_KEY"),
-                    "temperature": 0.1,
-                    "custom_fact_extraction_prompt": """
+                    "temperature": 0.1,                }
+            },
+            "custom_instructions": """
                     Agisci come il diario segreto di Ahri. Analizza la conversazione e salva SOLO informazioni cruciali, fatti concreti o preferenze importanti.
 
                     REGOLE RIGIDE:
@@ -69,9 +70,7 @@ if MEM0_ENABLED:
 
                     Rispondi rigorosamente in formato JSON:
                     {"facts": ["frase 1", "frase 2"]}
-                    """
-                }
-            },
+                    """,
             "embedder": {
                 "provider": "gemini",
                 "config": {
