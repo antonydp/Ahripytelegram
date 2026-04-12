@@ -1,35 +1,83 @@
 import os
-from mem0 import Memory
+import logging
+from urllib.parse import urlparse, parse_qs, urlunparse, urlencode
 
-# mem0 usa Gemini sia per capire i fatti che per gli embedding
+try:
+    from mem0 import Memory
+    MEM0_ENABLED = True
+except ImportError as e:
+    logging.error(f"mem0 import failed: {e}")
+    MEM0_ENABLED = False
+    Memory = None
 
-config = {
-    "llm": {
-        "provider": "gemini",
-        "config": {
-            "model": "gemma-4-26b-a4b-it",
-            "api_key": os.getenv("GEMINI_API_KEY"),
-            "temperature": 0.1,
-        }
-    },
-    "embedder": {
-        "provider": "gemini",
-        "config": {
-            "model": "models/gemini-embedding-2-preview",
-            "api_key": os.getenv("GEMINI_API_KEY"),
-            "embedding_dims": 768,
-        }
-    },
-    "vector_store": {
-        "provider": "pgvector",
-        "config": {
-            # mem0 vuole una connessione sync
-            "connection_string": os.getenv("SQLALCHEMY_DATABASE_URI", "").replace("postgresql+asyncpg", "postgresql").replace("sqlite+aiosqlite", "sqlite"),
-            "collection_name": "ahri_memories",
-            "embedding_model_dims": 768,
-        }
-    }
-}
+def _sanitize_pg_connection_string(raw_url: str) -> str:
+    """
+    Converte postgresql+asyncpg://...?ssl=true in formato psycopg2:
+    postgresql://...?sslmode=require
+    """
+    if not raw_url:
+        return raw_url
 
-# singleton
-ahri_memory = Memory.from_config(config)
+    # 1. Togli il driver asyncpg
+    url = raw_url.replace("postgresql+asyncpg://", "postgresql://")
+
+    # 2. Parsa e sistema i parametri query
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+
+    # psycopg2 vuole sslmode, non ssl
+    if "ssl" in query:
+        ssl_val = query.pop("ssl")[0]
+        if ssl_val.lower() in ("true", "1", "require"):
+            query["sslmode"] = ["require"]
+
+    # Ricostruisci la URL
+    new_query = urlencode(query, doseq=True)
+    sanitized = urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        parsed.params,
+        new_query,
+        parsed.fragment
+    ))
+    return sanitized
+
+ahri_memory = None
+
+if MEM0_ENABLED:
+    try:
+        raw_db_url = os.getenv("SQLALCHEMY_DATABASE_URI", "")
+        pg_dsn = _sanitize_pg_connection_string(raw_db_url)
+
+        config = {
+            "llm": {
+                "provider": "gemini",
+                "config": {
+                    "model": "gemini-2.5-flash",
+                    "api_key": os.getenv("GEMINI_API_KEY"),
+                    "temperature": 0.1,
+                }
+            },
+            "embedder": {
+                "provider": "gemini",
+                "config": {
+                    "model": "models/text-embedding-004",
+                    "api_key": os.getenv("GEMINI_API_KEY"),
+                    "embedding_dims": 768,
+                }
+            },
+            "vector_store": {
+                "provider": "pgvector",
+                "config": {
+                    "connection_string": pg_dsn,
+                    "collection_name": "ahri_memories",
+                    "embedding_model_dims": 768,
+                }
+            }
+        }
+        ahri_memory = Memory.from_config(config)
+        logging.info("mem0 inizializzato correttamente")
+    except Exception as e:
+        logging.error(f"mem0 init failed: {e}. Continuo senza memoria.")
+        ahri_memory = None
