@@ -62,7 +62,7 @@ async def test_send_message_with_function_call():
 
         # Assert
         assert result == "The current time is 12:00 PM"
-        mock_plugin_manager.get_function_response.assert_called_once_with(mock_function_call, mock_chat)
+        mock_plugin_manager.get_function_response.assert_called_once_with(mock_function_call, mock_chat, db=None, user_id=None)
 
 @pytest.mark.asyncio
 async def test_get_chat_with_user_name():

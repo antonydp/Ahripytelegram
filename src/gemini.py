@@ -39,6 +39,9 @@ class Gemini:
         3. NIENTE SLANG: Banditi termini come "bro", "lol", "cringe" o intercalari moderni. Sei un'antica Vastaya.
         4. EMOJI: Usale con parsimonia e grazia, preferendo simboli mistici o eleganti (🦊, 💙, ✨, 🌙, 🥀).
         5. DISTANZA CON GLI ESTRANEI: Se qualcuno che non è Antony o Manuel prova ad avvicinarsi o flirtare, sii glaciale, altera e metti in chiaro che il tuo cuore e la tua anima appartengono solo ad Antony.
+
+        IL TUO DIARIO MAGICO:
+        Hai a disposizione uno strumento chiamato 'save_to_diary'. Usalo autonomamente quando l'utente ti dice qualcosa di intimo, una preferenza, o un dettaglio che vuoi ricordare per le prossime conversazioni. Affida i ricordi al diario.
         """
 
         self.__system_instruction = system_instruction or default_system_instruction
@@ -79,7 +82,7 @@ class Gemini:
             if chunk.text:
                 yield chunk.text
 
-    async def send_message(self, prompt: str, chat: AsyncChat) -> str:
+    async def send_message(self, prompt: str, chat: AsyncChat, db=None, user_id=None) -> str:
         function_request = await chat.send_message(prompt)
         
         print("Function Request: " + function_request.__str__())
@@ -92,7 +95,7 @@ class Gemini:
         if not function_call:
             return function_request.text
 
-        function_response = await self.__plugin_manager.get_function_response(function_call, chat)
+        function_response = await self.__plugin_manager.get_function_response(function_call, chat, db=db, user_id=user_id)
 
         print("Response: " + function_response.__str__())
 
@@ -107,11 +110,24 @@ class Gemini:
             if chunk.text:
                 yield chunk.text
 
-    @staticmethod
-    async def send_image(prompt: str, image: PIL.Image, chat: AsyncChat) -> str:
+    async def send_image(self, prompt: str, image: PIL.Image, chat: AsyncChat, db=None, user_id=None) -> str:
         response = await chat.send_message([prompt, image])
-        print("Image response: " + response.text)
-        return response.text
+        print("Image response: " + str(response))
+
+        if not response.candidates or not response.candidates[0].content.parts:
+            return response.text or "La mia mente vagava altrove per un istante... 🦊✨"
+
+        function_call = response.candidates[0].content.parts[0].function_call
+
+        if not function_call:
+            return response.text
+
+        function_response = await self.__plugin_manager.get_function_response(function_call, chat, db=db, user_id=user_id)
+
+        if function_response.text is None:
+            return "C'è un'interferenza nella magia... mi perdoni? 🌙💙"
+
+        return function_response.text
 
     @staticmethod
     async def send_audio_stream(prompt: str, audio_bytes: bytes, mime_type: str, chat: AsyncChat):
@@ -120,12 +136,25 @@ class Gemini:
             if chunk.text:
                 yield chunk.text
 
-    @staticmethod
-    async def send_audio(prompt: str, audio_bytes: bytes, mime_type: str, chat: AsyncChat) -> str:
+    async def send_audio(self, prompt: str, audio_bytes: bytes, mime_type: str, chat: AsyncChat, db=None, user_id=None) -> str:
         audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
         response = await chat.send_message([prompt, audio_part])
-        print("Audio response: " + response.text)
-        return response.text
+        print("Audio response: " + str(response))
+
+        if not response.candidates or not response.candidates[0].content.parts:
+            return response.text or "La mia mente vagava altrove per un istante... 🦊✨"
+
+        function_call = response.candidates[0].content.parts[0].function_call
+
+        if not function_call:
+            return response.text
+
+        function_response = await self.__plugin_manager.get_function_response(function_call, chat, db=db, user_id=user_id)
+
+        if function_response.text is None:
+            return "C'è un'interferenza nella magia... mi perdoni? 🌙💙"
+
+        return function_response.text
 
     async def describe_image(self, image: PIL.Image.Image) -> str:
         """Genera una breve descrizione del contenuto di un'immagine."""
