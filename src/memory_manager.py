@@ -54,7 +54,7 @@ if MEM0_ENABLED:
             "llm": {
                 "provider": "gemini",
                 "config": {
-                    "model": "gemini-1.5-flash",
+                    "model": "gemma-4-26b-a4b-it",
                     "api_key": os.getenv("GEMINI_API_KEY"),
                     "temperature": 0.1,
                     "custom_fact_extraction_prompt": """
