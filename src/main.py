@@ -46,35 +46,41 @@ async def save_memory_background(history_slice, raw_text, full_response, usernam
 
     try:
         mem0_messages = []
+        # Passiamo i messaggi puliti, Mem0 capirà dal prompt chi è chi
         for msg in history_slice:
             role = "user" if msg["role"] == "user" else "assistant"
-            # Identifica esplicitamente chi sta parlando
-            prefix = f"@{username or user_name}: " if role == "user" else "Ahri: "
-            mem0_messages.append({"role": role, "content": f"{prefix}{msg['parts'][0]['text']}"})
+            mem0_messages.append({"role": role, "content": msg['parts'][0]['text']})
 
-        mem0_messages.append({"role": "user", "content": f"@{username or user_name}: {raw_text}"})
-        mem0_messages.append({"role": "assistant", "content": f"Ahri: {full_response}"})
+        mem0_messages.append({"role": "user", "content": raw_text})
+        mem0_messages.append({"role": "assistant", "content": full_response})
 
-        # Costruiamo un nome chiaro per l'utente attuale
         display_name = f"{user_name} (@{username})" if username else user_name
 
+        # PROMPT ANTI-FLUFF: Estremamente rigido su cosa salvare e cosa ignorare
         extraction_prompt = f"""
-        Estrai ricordi e informazioni importanti da questa conversazione per la memoria a lungo termine di Ahri.
-        REGOLE TASSATIVE:
-        1. SALVA I FATTI ESATTI: Se {display_name} rivela una password, un segreto, un nome, un'abitudine o un dato specifico, salvalo ESATTAMENTE com'è (es. "La password di {display_name} è ahrimia12"). NON generalizzare le informazioni pratiche.
-        2. SALVA LE EMOZIONI/RELAZIONI: Registra cambiamenti nei legami, promesse, litigi o dichiarazioni affettive significative.
-        3. NOMI PROPRI OBBLIGATORI: È SEVERAMENTE VIETATO usare la parola generica "utente". Devi SEMPRE usare "{display_name}" come soggetto dell'azione.
-        4. Sii conciso, oggettivo e scrivi in terza persona. Ignora convenevoli e chiacchiere senza importanza.
+        Sei un analista dati spietato e oggettivo. Il tuo compito è estrarre SOLO informazioni concrete, fatti, accordi e dati specifici dalla conversazione tra l'IA (Ahri) e {display_name}.
+        
+        COSA NON DEVI ASSOLUTAMENTE SALVARE (SCARTA TUTTO QUESTO):
+        - NON salvare i tratti della personalità di Ahri (es. Sbagliato: "Si identifica come Ahri", "Il suo mondo è Runeterra").
+        - NON salvare dichiarazioni d'amore, metafore o devozione (es. Sbagliato: "Il suo cuore batte per...", "Il suo spirito è legato...", "Riserva la sua dolcezza...").
+        - NON usare MAI la parola "utente" o "l'utente". 
+
+        COSA DEVI SALVARE OBBIGATORIAMENTE (FATTI E DATI CONCRETI):
+        - Oggetti, prezzi, accordi commerciali, scambi (es. Giusto: "Il padre di Ahri voleva regalare a {display_name} un'uscita con lei in cambio di 500G di sconto sullo Zhonya").
+        - Password, nomi di account, indirizzi, date importanti (es. Giusto: "La password di {display_name} è ahrimia12").
+        - Azioni o eventi specifici accaduti fuori dalla chat di cui si parla.
+
+        Scrivi il ricordo in terza persona in una sola frase. Se nella conversazione ci sono solo frasi d'amore e nessun dato concreto, non restituire alcun ricordo. Usa SEMPRE e SOLO il nome "{display_name}".
         """
 
         await anyio.to_thread.run_sync(
             lambda: ahri_memory.add(
                 messages=mem0_messages,
+                user_id=str(user_id), # Aggiunto esplicitamente per le API di Mem0
                 agent_id="ahri_bot",
                 prompt=extraction_prompt,
                 metadata={
                     "username": username or user_name,
-                    "original_user_id": str(user_id),
                     "chat_id": str(chat_id),
                     "is_group": is_group
                 }
@@ -236,6 +242,7 @@ async def webhook(request: Request, background_tasks: BackgroundTasks, db: Async
                 results = await anyio.to_thread.run_sync(
                     lambda: ahri_memory.search(
                         query=search_query,
+                        user_id=str(user_id),
                         agent_id="ahri_bot", 
                         limit=4
                     )
@@ -300,5 +307,5 @@ async def webhook(request: Request, background_tasks: BackgroundTasks, db: Async
         return {
             "method": "sendMessage",
             "chat_id": chat_id,
-            "text": 'Sorry, I am not able to generate content for you right now. Please try again later. '
+            "text": 'C\'è un\'interferenza nella magia... mi perdoni? 🌙💙'
         }
