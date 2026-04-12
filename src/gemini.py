@@ -49,7 +49,7 @@ class Gemini:
             system_instruction=self.__system_instruction
         )
 
-    def get_chat(self, history: list, user_name: str = "User") -> AsyncChat:
+    def get_chat(self, history: list, user_name: str = "User", memory_context: str = None) -> AsyncChat:
         config = self.__generation_config.model_copy()
         
         # Contestualizza con chi sta parlando in modo che sappia subito se è Manuel, Antony o altri.
@@ -59,6 +59,9 @@ class Gemini:
             config.system_instruction += f"\n\nORA STAI PARLANDO CON IL TUO FIDANZATO, ANTONY (@Antonydpk). Sii dolce, innamorata e provocante."
         else:
             config.system_instruction += f"\n\nStai parlando con {user_name}."
+
+        if memory_context:
+            config.system_instruction += f"\n\n[RICORDI SU DI TE: {memory_context}]"
 
         return self.__client.chats.create(
             model=self.__model_name,

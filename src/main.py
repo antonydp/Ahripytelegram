@@ -1,6 +1,7 @@
 import time
 import random
 import re
+import anyio
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -10,6 +11,7 @@ from telegram import Update
 from src.chat_service import ChatService
 from src.enums import TelegramBotCommands
 from src.gemini import Gemini
+from src.memory_manager import ahri_memory
 from src.services.database_service import get_db
 from src.services.telegram_service import TelegramService
 from os import getenv
@@ -62,6 +64,8 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
         chat_session = await chat_service.get_or_create_session(db, chat_id)
 
         user_name = message_obj.from_user.first_name if message_obj.from_user else "User"
+        user_id = message_obj.from_user.id if message_obj.from_user else None
+        username = message_obj.from_user.username if message_obj.from_user else None
 
         if telegram_update.edited_message:
             return 'OK'
@@ -83,7 +87,10 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
         prompt = f"{user_name}: {raw_text}"
 
         # Always save user message to history
-        await chat_service.add_message(db, chat_session.id, prompt, message_obj.date, "user")
+        await chat_service.add_message(
+            db, chat_session.id, prompt, message_obj.date, "user",
+            user_id=user_id, username=username
+        )
 
         # Probability-based decision logic for groups
         if is_group:
@@ -130,7 +137,24 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
         if history:
             history.pop()
 
-        chat = gemini_chat.get_chat(history=history, user_name=user_name)
+        # --- MEMORIA CONDIVISA MEM0 ---
+        memory_context = ""
+        if user_id:
+            try:
+                # cerca i 5 ricordi più rilevanti per questa frase
+                results = await anyio.to_thread.run_sync(
+                    lambda: ahri_memory.search(
+                        query=raw_text,
+                        user_id=str(user_id),
+                        limit=5
+                    )
+                )
+                if results:
+                    memory_context = "\n".join([f"- {m['memory']}" for m in results])
+            except Exception as e:
+                print(f"Mem0 search error: {e}")
+
+        chat = gemini_chat.get_chat(history=history, user_name=user_name, memory_context=memory_context)
 
         if message_obj.photo:
             image = await telegram_service.get_image_from_message(message_obj)
@@ -167,6 +191,23 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
         if full_response:
             await chat_service.add_message(db, chat_session.id, full_response, datetime.now(timezone.utc), "model")
+
+            # --- SALVA IN MEMORIA CONDIVISA ---
+            if user_id:
+                try:
+                    await anyio.to_thread.run_sync(
+                        lambda: ahri_memory.add(
+                            messages=[
+                                {"role": "user", "content": raw_text},
+                                {"role": "assistant", "content": full_response}
+                            ],
+                            user_id=str(user_id),
+                            metadata={"username": username, "chat_id": str(chat_id), "is_group": is_group}
+                        )
+                    )
+                except Exception as e:
+                    print(f"Mem0 add error: {e}")
+
             await telegram_service.send_message(chat_id=chat_id, text=full_response, reply_to_message_id=message_obj.message_id)
 
         return 'OK'

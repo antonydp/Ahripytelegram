@@ -61,7 +61,7 @@ class ChatService:
         
         return history
     
-    async def add_message(self, db: AsyncSession, session_id: int, text: str, date: datetime, role: str) -> ChatMessage:
+    async def add_message(self, db: AsyncSession, session_id: int, text: str, date: datetime, role: str, user_id: int = None, username: str = None) -> ChatMessage:
         """
         Add a message to a chat session.
         
@@ -71,6 +71,8 @@ class ChatService:
             text: The message text content.
             date: The datetime of the message.
             role: The role of the sender ('user' or 'model').
+            user_id: The Telegram user ID.
+            username: The Telegram username.
         
         Returns:
             The created ChatMessage instance.
@@ -79,7 +81,9 @@ class ChatService:
             chat_id=session_id,
             text=text,
             date=date,
-            role=role
+            role=role,
+            user_id=user_id,
+            username=username
         )
         db.add(chat_message)
         await db.commit()
