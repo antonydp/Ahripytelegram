@@ -117,6 +117,9 @@ class TestGetChatHistory:
         assert "parts" in history[0]
         assert isinstance(history[0]["parts"], list)
         assert "text" in history[0]["parts"][0]
+        # Should NOT contain user_id or username as they cause validation errors in google-genai
+        assert "user_id" not in history[0]
+        assert "username" not in history[0]
     
     @pytest.mark.asyncio
     async def test_alternating_roles_preserved(self, db_session, chat_service, session_with_messages):
