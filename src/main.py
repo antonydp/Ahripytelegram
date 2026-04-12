@@ -84,43 +84,62 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
             await telegram_service.send_new_chat_message(chat_id=chat_id)
             return 'OK'
         
-        # Construct the user prompt early to save it always
-        raw_text = (message_obj.text or message_obj.caption or "").replace(f"@{bot_user.username}", "").strip()
-        if message_obj.photo and not message_obj.caption:
-            raw_text = "sent an image"
-        elif (message_obj.voice or message_obj.audio) and not message_obj.caption:
-            raw_text = "sent an audio message"
-
-        prompt = f"{user_name}: {raw_text}"
-
         # --- INIZIO FIX: CONTROLLO DUPLICATI (RETRY DI TELEGRAM) ---
+        tg_msg_date = message_obj.date
+        if tg_msg_date.tzinfo is None:
+            tg_msg_date = tg_msg_date.replace(tzinfo=timezone.utc)
+
         stmt = select(ChatMessage).where(
             ChatMessage.chat_id == chat_session.id,
-            ChatMessage.role == 'user',
-            ChatMessage.text == prompt
+            ChatMessage.role == 'user'
         ).order_by(ChatMessage.date.desc()).limit(1)
 
         result = await db.execute(stmt)
         last_user_msg = result.scalar_one_or_none()
 
         if last_user_msg:
-            # Data originale del messaggio in arrivo da Telegram
-            tg_msg_date = message_obj.date
-            if tg_msg_date.tzinfo is None:
-                tg_msg_date = tg_msg_date.replace(tzinfo=timezone.utc)
-
             # Data del messaggio che avevamo già salvato nel DB
             db_msg_date = last_user_msg.date
             if db_msg_date.tzinfo is None:
                 db_msg_date = db_msg_date.replace(tzinfo=timezone.utc)
 
-            # Se la differenza tra le due date di invio è minima (tolleranza di 2 secondi per i troncamenti del DB),
-            # si tratta ESATTAMENTE dello stesso messaggio ritrasmesso da Telegram. Lo ignoriamo, a prescindere
-            # da quanti secondi/minuti sono passati da datetime.now()
+            # Se la differenza tra le due date di invio è minima (tolleranza di 2 secondi),
+            # si tratta ESATTAMENTE dello stesso messaggio ritrasmesso da Telegram.
             if abs((tg_msg_date - db_msg_date).total_seconds()) < 2:
                 print("Messaggio duplicato (Retry di Telegram). Ignorato.")
                 return 'OK'
         # --- FINE FIX ---
+
+        # Identifica e descrivi i media
+        image = None
+        audio_data = None
+        media_description = ""
+        caption = (message_obj.text or message_obj.caption or "").replace(f"@{bot_user.username}", "").strip()
+
+        if message_obj.photo:
+            image = await telegram_service.get_image_from_message(message_obj)
+            if image:
+                media_description = await gemini_chat.describe_image(image)
+        elif message_obj.voice or message_obj.audio:
+            audio_data = await telegram_service.get_audio_from_message(message_obj)
+            if audio_data:
+                audio_bytes, mime_type = audio_data
+                media_description = await gemini_chat.describe_audio(audio_bytes, mime_type)
+
+        if media_description:
+            if caption:
+                raw_text = f"[{media_description}] {caption}"
+            else:
+                raw_text = media_description
+        else:
+            raw_text = caption
+            if not raw_text:
+                if message_obj.photo:
+                    raw_text = "sent an image"
+                elif message_obj.voice or message_obj.audio:
+                    raw_text = "sent an audio message"
+
+        prompt = f"{user_name}: {raw_text}"
 
         # Always save user message to history
         await chat_service.add_message(
@@ -214,15 +233,12 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
         # Invia l'azione "Sta scrivendo..." a Telegram per rassicurare l'utente durante l'attesa
         await telegram_service._telegram_app_bot.send_chat_action(chat_id=chat_id, action="typing")
 
-        if message_obj.photo:
-            image = await telegram_service.get_image_from_message(message_obj)
+        if image:
             full_response = await gemini_chat.send_image(prompt, image, chat)
 
-        elif message_obj.voice or message_obj.audio:
-            audio_data = await telegram_service.get_audio_from_message(message_obj)
-            if audio_data:
-                audio_bytes, mime_type = audio_data
-                full_response = await gemini_chat.send_audio(prompt, audio_bytes, mime_type, chat)
+        elif audio_data:
+            audio_bytes, mime_type = audio_data
+            full_response = await gemini_chat.send_audio(prompt, audio_bytes, mime_type, chat)
         else:
             # Attendiamo la risposta completa da Gemini (molto più veloce rispetto allo streaming)
             full_response = await gemini_chat.send_message(prompt, chat)

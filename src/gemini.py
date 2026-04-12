@@ -132,6 +132,41 @@ class Gemini:
         print("Audio response: " + response.text)
         return response.text
 
+    async def describe_image(self, image: PIL.Image.Image) -> str:
+        """Genera una breve descrizione del contenuto di un'immagine."""
+        prompt = "Descrivi brevemente cosa vedi in questa immagine in una sola frase, in italiano. Sii concisa e oggettiva."
+        try:
+            response = await self.__client.models.generate_content(
+                model=self.__model_name,
+                contents=[prompt, image],
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    system_instruction="Sei un assistente che descrive immagini in modo conciso."
+                )
+            )
+            return response.text.strip()
+        except Exception as e:
+            print(f"Error describing image: {e}")
+            return "un'immagine"
+
+    async def describe_audio(self, audio_bytes: bytes, mime_type: str) -> str:
+        """Trascrive o descrive il contenuto di un file audio."""
+        prompt = "Trascrivi il testo di questo audio se c'è qualcuno che parla, altrimenti descrivi brevemente i suoni che senti. Rispondi solo con la trascrizione o la descrizione, in italiano, in modo conciso."
+        try:
+            audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+            response = await self.__client.models.generate_content(
+                model=self.__model_name,
+                contents=[prompt, audio_part],
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    system_instruction="Sei un assistente che trascrive e descrive contenuti audio in modo conciso."
+                )
+            )
+            return response.text.strip()
+        except Exception as e:
+            print(f"Error describing audio: {e}")
+            return "un messaggio vocale"
+
     @classmethod
     async def close_plugins(cls) -> None:
         """Chiude tutti i plugin e pulisce le risorse."""
