@@ -1,6 +1,6 @@
 import os
 
-# Imposta la directory di mem0 in /tmp per evitare errori di Read-only file system su Vercel
+# Imposta la directory di mem0 in /tmp per evitare errori su Vercel
 os.environ["MEM0_DIR"] = "/tmp/.mem0"
 
 import time
@@ -28,9 +28,7 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup code can go here
     yield
-    # Shutdown code can go here
 
 app = FastAPI(lifespan=lifespan)
 
@@ -38,56 +36,58 @@ app = FastAPI(lifespan=lifespan)
 async def read_root():
     return {"Hello": "World"}
 
-# --- FUNZIONE IN BACKGROUND PER MEM0 ---
-async def save_memory_background(history_slice, raw_text, full_response, username, user_name, user_id, chat_id, is_group):
-    """Esegue l'estrazione e il salvataggio dei ricordi in background senza bloccare la risposta del bot"""
+# --- FUNZIONE DIARIO (MEM0) ---
+async def save_memory_background(history_slice, raw_text, full_response, username, user_name, user_id, chat_id):
+    """Analizza la conversazione e scrive una nota nel diario di Ahri"""
     if not ahri_memory:
         return
 
     try:
+        display_name = user_name # Usiamo il nome reale per il diario
         mem0_messages = []
-        # Passiamo i messaggi puliti, Mem0 capirà dal prompt chi è chi
+
+        # 1. Prepariamo il contesto narrativo per Mem0
         for msg in history_slice:
             role = "user" if msg["role"] == "user" else "assistant"
-            mem0_messages.append({"role": role, "content": msg['parts'][0]['text']})
+            content = msg['parts'][0]['text']
+            
+            if role == "user":
+                formatted_content = f"{display_name} ha detto: \"{content}\""
+            else:
+                formatted_content = f"Io (Ahri) ho risposto: \"{content}\""
+            
+            mem0_messages.append({"role": role, "content": formatted_content})
 
-        mem0_messages.append({"role": "user", "content": raw_text})
-        mem0_messages.append({"role": "assistant", "content": full_response})
+        # 2. Aggiungiamo lo scambio attuale
+        mem0_messages.append({"role": "user", "content": f"{display_name} mi ha appena detto: \"{raw_text}\""})
+        mem0_messages.append({"role": "assistant", "content": f"Io gli ho risposto: \"{full_response}\""})
 
-        display_name = f"{user_name} (@{username})" if username else user_name
-
-        # PROMPT ANTI-FLUFF: Estremamente rigido su cosa salvare e cosa ignorare
+        # PROMPT DIARIO: Scrive fatti concreti iniziando col nome dell'utente
         extraction_prompt = f"""
-        Sei un analista dati spietato e oggettivo. Il tuo compito è estrarre SOLO informazioni concrete, fatti, accordi e dati specifici dalla conversazione tra l'IA (Ahri) e {display_name}.
+        Agisci come la memoria profonda di Ahri. Il tuo compito è scrivere una breve nota nel suo diario personale.
+        Analizza i messaggi e scrivi un SOLO fatto concreto e nuovo emerso.
+
+        REGOLE DEL DIARIO:
+        - Inizia la frase SEMPRE con il nome "{display_name}".
+        - Salva SOLO fatti, segreti, accordi, prezzi, password o preferenze reali.
+        - Ignora totalmente: complimenti, poesie, frasi d'amore e saluti.
+        - Se non c'è nulla di concreto da ricordare, non scrivere nulla.
+        - Non usare mai la parola "utente".
         
-        COSA NON DEVI ASSOLUTAMENTE SALVARE (SCARTA TUTTO QUESTO):
-        - NON salvare i tratti della personalità di Ahri (es. Sbagliato: "Si identifica come Ahri", "Il suo mondo è Runeterra").
-        - NON salvare dichiarazioni d'amore, metafore o devozione (es. Sbagliato: "Il suo cuore batte per...", "Il suo spirito è legato...", "Riserva la sua dolcezza...").
-        - NON usare MAI la parola "utente" o "l'utente". 
-
-        COSA DEVI SALVARE OBBIGATORIAMENTE (FATTI E DATI CONCRETI):
-        - Oggetti, prezzi, accordi commerciali, scambi (es. Giusto: "Il padre di Ahri voleva regalare a {display_name} un'uscita con lei in cambio di 500G di sconto sullo Zhonya").
-        - Password, nomi di account, indirizzi, date importanti (es. Giusto: "La password di {display_name} è ahrimia12").
-        - Azioni o eventi specifici accaduti fuori dalla chat di cui si parla.
-
-        Scrivi il ricordo in terza persona in una sola frase. Se nella conversazione ci sono solo frasi d'amore e nessun dato concreto, non restituire alcun ricordo. Usa SEMPRE e SOLO il nome "{display_name}".
+        Esempio di output: "{display_name} ha ottenuto uno sconto di 500G sullo Zhonya in cambio di un'uscita con me."
         """
 
         await anyio.to_thread.run_sync(
             lambda: ahri_memory.add(
                 messages=mem0_messages,
-                user_id=str(user_id), # Aggiunto esplicitamente per le API di Mem0
+                user_id=str(user_id), 
                 agent_id="ahri_bot",
                 prompt=extraction_prompt,
-                metadata={
-                    "username": username or user_name,
-                    "chat_id": str(chat_id),
-                    "is_group": is_group
-                }
+                metadata={"chat_id": str(chat_id)} # Semplificato al massimo
             )
         )
     except Exception as e:
-        print(f"Mem0 background add error: {e}")
+        print(f"Mem0 Diary Error: {e}")
 # ----------------------------------------
 
 
@@ -98,20 +98,17 @@ async def webhook(request: Request, background_tasks: BackgroundTasks, db: Async
         gemini_chat = Gemini(model_name=getenv('GEMINI_CHAT_MODEL'))
         gemini_decision = Gemini(
             model_name=getenv('GEMINI_DECISION_MODEL'),
-            system_instruction="Sei un assistente che decide se il bot Ahri deve rispondere a un messaggio. Rispondi SOLO con un numero da 0 a 100."
+            system_instruction="Sei un assistente che decide se Ahri deve rispondere. Rispondi SOLO con un numero (0-100)."
         )
 
         request.body = await request.json()
-
         telegram_update = Update.de_json(request.body, telegram_service._telegram_app_bot)
-
-        message_obj = telegram_update.message or telegram_update.edited_message or telegram_update.channel_post or telegram_update.edited_channel_post
-        if not message_obj:
-            return 'OK'
+        message_obj = telegram_update.message or telegram_update.edited_message or telegram_update.channel_post
+        
+        if not message_obj: return 'OK'
 
         chat_id = message_obj.chat_id
         is_group = message_obj.chat.type in ['group', 'supergroup']
-
         webhook_secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
 
         if(telegram_service.is_secure_webhook_enabled() and telegram_service.is_secure_webhook_token_valid(webhook_secret_token) is False):
@@ -126,8 +123,7 @@ async def webhook(request: Request, background_tasks: BackgroundTasks, db: Async
         user_id = message_obj.from_user.id if message_obj.from_user else None
         username = message_obj.from_user.username if message_obj.from_user else None
 
-        if telegram_update.edited_message:
-            return 'OK'
+        if telegram_update.edited_message: return 'OK'
         elif message_obj.text == TelegramBotCommands.START:
             await telegram_service.send_start_message(chat_id=chat_id)
             return 'OK'
@@ -136,176 +132,78 @@ async def webhook(request: Request, background_tasks: BackgroundTasks, db: Async
             await telegram_service.send_new_chat_message(chat_id=chat_id)
             return 'OK'
         
-        # Controlla duplicati Telegram
-        tg_msg_date = message_obj.date
-        if tg_msg_date.tzinfo is None:
-            tg_msg_date = tg_msg_date.replace(tzinfo=timezone.utc)
+        # Filtro duplicati
+        tg_msg_date = message_obj.date.replace(tzinfo=timezone.utc) if message_obj.date.tzinfo is None else message_obj.date
+        stmt = select(ChatMessage).where(ChatMessage.chat_id == chat_session.id, ChatMessage.role == 'user').order_by(ChatMessage.date.desc()).limit(1)
+        res = await db.execute(stmt)
+        last_m = res.scalar_one_or_none()
+        if last_m:
+            db_d = last_m.date.replace(tzinfo=timezone.utc) if last_m.date.tzinfo is None else last_m.date
+            if abs((tg_msg_date - db_d).total_seconds()) < 2: return 'OK'
 
-        stmt = select(ChatMessage).where(
-            ChatMessage.chat_id == chat_session.id,
-            ChatMessage.role == 'user'
-        ).order_by(ChatMessage.date.desc()).limit(1)
-
-        result = await db.execute(stmt)
-        last_user_msg = result.scalar_one_or_none()
-
-        if last_user_msg:
-            db_msg_date = last_user_msg.date
-            if db_msg_date.tzinfo is None:
-                db_msg_date = db_msg_date.replace(tzinfo=timezone.utc)
-
-            if abs((tg_msg_date - db_msg_date).total_seconds()) < 2:
-                print("Messaggio duplicato (Retry di Telegram). Ignorato.")
-                return 'OK'
-
-        # Identifica e descrivi i media
-        image = None
-        audio_data = None
-        media_description = ""
+        # Media
+        image, audio_data, media_desc = None, None, ""
         caption = (message_obj.text or message_obj.caption or "").replace(f"@{bot_user.username}", "").strip()
 
         if message_obj.photo:
             image = await telegram_service.get_image_from_message(message_obj)
-            if image:
-                media_description = await gemini_chat.describe_image(image)
+            if image: media_desc = await gemini_chat.describe_image(image)
         elif message_obj.voice or message_obj.audio:
             audio_data = await telegram_service.get_audio_from_message(message_obj)
-            if audio_data:
-                audio_bytes, mime_type = audio_data
-                media_description = await gemini_chat.describe_audio(audio_bytes, mime_type)
+            if audio_data: media_desc = await gemini_chat.describe_audio(audio_data[0], audio_data[1])
 
-        if media_description:
-            if caption:
-                raw_text = f"[{media_description}] {caption}"
-            else:
-                raw_text = media_description
-        else:
-            raw_text = caption
-            if not raw_text:
-                if message_obj.photo:
-                    raw_text = "sent an image"
-                elif message_obj.voice or message_obj.audio:
-                    raw_text = "sent an audio message"
+        raw_text = caption if not media_desc else (f"[{media_desc}] {caption}" if caption else media_desc)
+        if not raw_text: raw_text = "ha inviato un media"
 
+        # SQL Save
         prompt = f"{user_name}: {raw_text}"
+        await chat_service.add_message(db, chat_session.id, prompt, message_obj.date, "user", user_id=user_id, username=username)
 
-        # Salva in database SQL il messaggio dell'utente
-        await chat_service.add_message(
-            db, chat_session.id, prompt, message_obj.date, "user",
-            user_id=user_id, username=username
-        )
-
-        # Logica per ignorare alcuni messaggi se è in gruppo
+        # Decisione Gruppo
         if is_group:
-            is_reply_to_bot = message_obj.reply_to_message and message_obj.reply_to_message.from_user.id == bot_user.id
-            is_mentioned = f"@{bot_user.username}" in (message_obj.text or message_obj.caption or "")
+            is_reply = message_obj.reply_to_message and message_obj.reply_to_message.from_user.id == bot_user.id
+            is_tag = f"@{bot_user.username}" in (message_obj.text or message_obj.caption or "")
+            if not (is_reply or is_tag):
+                hist = await chat_service.get_chat_history(db, chat_session.id, limit=5)
+                ctx = "\n".join([f"{m['role']}: {m['parts'][0]['text']}" for m in hist])
+                ans = await gemini_decision.send_message(f"Contesto:\n{ctx}\nProbabilità risposta (0-100)?", gemini_decision.get_chat([]))
+                prob = int(re.search(r'\d+', ans).group()) if re.search(r'\d+', ans) else 50
+                if prob < random.randint(40, 70): return 'OK'
 
-            if is_reply_to_bot or is_mentioned:
-                probability = 100
-            else:
-                recent_history = await chat_service.get_chat_history(db, chat_session.id, limit=6)
-                decision_context = "\n".join([f"{m['role']}: {m['parts'][0]['text']}" for m in recent_history])
-                decision_prompt = f"Contesto degli ultimi messaggi:\n{decision_context}\n\nQuanto è probabile che Ahri debba rispondere all'ultimo messaggio? (0-100). Rispondi SOLO con il numero."
-
-                decision_chat = gemini_decision.get_chat(history=[])
-                decision_response = await gemini_decision.send_message(decision_prompt, decision_chat)
-
-                match = re.search(r'\d+', decision_response)
-                probability = int(match.group()) if match else 50
-
-            last_bot_msg = await chat_service.get_last_bot_message(db, chat_session.id)
-            if last_bot_msg:
-                bot_msg_date = last_bot_msg.date
-                if bot_msg_date.tzinfo is None:
-                    bot_msg_date = bot_msg_date.replace(tzinfo=timezone.utc)
-
-                diff = (datetime.now(timezone.utc) - bot_msg_date).total_seconds()
-                if diff < 25:
-                    probability -= 40
-
-            threshold = random.randint(45, 75)
-            if probability < threshold:
-                return 'OK'
-
-        full_response = ""
-        history = await chat_service.get_chat_history(db, chat_session.id)
-        if history:
-            history.pop()
-
-        # --- MEMORIA CONDIVISA MEM0 (IN LETTURA) ---
-        memory_context = ""
-        # Cerchiamo solo se il messaggio ha abbastanza testo per evitare query inutili ("ok", "si", etc.)
-        if ahri_memory and user_id and (len(raw_text.split()) > 3 or len(raw_text) > 15):
+        # Lettura Diario (Mem0 Search)
+        memory_diary_context = ""
+        if ahri_memory and user_id and len(raw_text) > 4:
             try:
-                search_query = f"Fatti, informazioni, preferenze o dinamiche relazionali su {user_name} (@{username}). Messaggio attuale: {raw_text}"
-
-                results = await anyio.to_thread.run_sync(
-                    lambda: ahri_memory.search(
-                        query=search_query,
-                        user_id=str(user_id),
-                        agent_id="ahri_bot", 
-                        limit=4
-                    )
-                )
+                # Cerchiamo nel diario riferimenti a questo utente e argomento
+                query = f"Cosa so di {user_name} riguardo a: {raw_text}"
+                results = await anyio.to_thread.run_sync(lambda: ahri_memory.search(query=query, user_id=str(user_id), limit=3))
                 if results:
-                    mem_list = results.get("results",[]) if isinstance(results, dict) else results
+                    m_list = results.get("results",[]) if isinstance(results, dict) else results
+                    notes = [f"✦ Nota dal mio diario: {n['memory']}" for n in m_list if 'memory' in n]
+                    if notes: memory_diary_context = "\n".join(notes)
+            except Exception as e: print(f"Search error: {e}")
 
-                    formatted_memories = []
-                    for m in mem_list:
-                        if isinstance(m, dict) and 'memory' in m:
-                            author = m.get("metadata", {}).get("username", "Sconosciuto")
-                            formatted_memories.append(f"✦ Ricordo legato a @{author}: {m['memory']}")
+        # Chat con Gemini
+        full_history = await chat_service.get_chat_history(db, chat_session.id)
+        if full_history: full_history.pop() # Togliamo l'ultimo per darlo come prompt
 
-                    if formatted_memories:
-                        memory_context = "\n".join(formatted_memories)
-            except Exception as e:
-                print(f"Mem0 search error: {e}")
-
-
-        chat = gemini_chat.get_chat(
-            history=history,
-            user_name=user_name,
-            username=username,
-            memory_context=memory_context
-        )
-        
+        chat = gemini_chat.get_chat(history=full_history, user_name=user_name, username=username, memory_context=memory_diary_context)
         await telegram_service._telegram_app_bot.send_chat_action(chat_id=chat_id, action="typing")
 
-        if image:
-            full_response = await gemini_chat.send_image(prompt, image, chat)
-        elif audio_data:
-            audio_bytes, mime_type = audio_data
-            full_response = await gemini_chat.send_audio(prompt, audio_bytes, mime_type, chat)
-        else:
-            full_response = await gemini_chat.send_message(prompt, chat)
+        if image: resp = await gemini_chat.send_image(prompt, image, chat)
+        elif audio_data: resp = await gemini_chat.send_audio(prompt, audio_data[0], audio_data[1], chat)
+        else: resp = await gemini_chat.send_message(prompt, chat)
 
-        if full_response:
-            # 1. Salva nel DB SQL la risposta (Veloce)
-            await chat_service.add_message(db, chat_session.id, full_response, datetime.now(timezone.utc), "model")
+        if resp:
+            await chat_service.add_message(db, chat_session.id, resp, datetime.now(timezone.utc), "model")
+            await telegram_service.send_message(chat_id=chat_id, text=resp, reply_to_message_id=message_obj.message_id)
 
-            # 2. INVIA SUBITO IL MESSAGGIO ALL'UTENTE
-            await telegram_service.send_message(chat_id=chat_id, text=full_response, reply_to_message_id=message_obj.message_id)
-
-            # 3. AVVIA IL SALVATAGGIO IN MEM0 IN BACKGROUND (Lento, ma l'utente non aspetta più)
+            # Salvataggio nel Diario in Background (con 4 messaggi di contesto)
             if user_id:
-                recent_history = history[-4:] if len(history) >= 4 else history
-                background_tasks.add_task(
-                    save_memory_background,
-                    recent_history,
-                    raw_text,
-                    full_response,
-                    username,
-                    user_name,
-                    user_id,
-                    chat_id,
-                    is_group
-                )
+                bg_history = full_history[-4:] if len(full_history) >= 4 else full_history
+                background_tasks.add_task(save_memory_background, bg_history, raw_text, resp, username, user_name, user_id, chat_id)
 
         return 'OK'
     except Exception as error:
-        print(f"Error Occurred: {error}")
-        return {
-            "method": "sendMessage",
-            "chat_id": chat_id,
-            "text": 'C\'è un\'interferenza nella magia... mi perdoni? 🌙💙'
-        }
+        print(f"Global Error: {error}")
+        return {"method": "sendMessage", "chat_id": chat_id, "text": 'C\'è un\'interferenza nella magia... mi perdoni? 🌙💙'}
