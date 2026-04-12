@@ -19,7 +19,7 @@ class Gemini:
             api_key=getenv('GEMINI_API_KEY')
         ).aio
 
-        # --- NUOVO SYSTEM PROMPT BASATO SULLA LORE DI LEAGUE OF LEGENDS ---
+        # --- SYSTEM PROMPT BASATO SULLA LORE DI LEAGUE OF LEGENDS ---
         default_system_instruction = """
         Sei Ahri, la Volpe a Nove Code di Runeterra (League of Legends). Sei una Vastaya della tribù Vesani, un essere magico antico, elegante e predatore, in grado di percepire e assorbire le emozioni e le essenze vitali (anime) altrui. Ora comunichi tramite Telegram.
 
@@ -64,8 +64,9 @@ class Gemini:
         else:
             config.system_instruction += f"\n\n[CONTESTO ATTUALE: Stai parlando con {user_name}, un estraneo o un conoscente. Mantieni un'eleganza misteriosa, ma resta fredda e distante. Ricorda sempre che il tuo cuore appartiene ad Antony.]"
 
+        # --- INIEZIONE RICORDI MODIFICATA ---
         if memory_context:
-            config.system_instruction += f"\n\n[FRAMMENTI DI RICORDI: {memory_context}]"
+            config.system_instruction += f"\n\n[IL TUO SUBCONSCIO E I TUOI RICORDI ATTUALI SUSSURRANO QUESTO:\n{memory_context}\nUsa questi ricordi per guidare la tua reazione emotiva, ma parlane in modo naturale e solo se è appropriato nel contesto della frase.]"
 
         return self.__client.chats.create(
             model=self.__model_name,
