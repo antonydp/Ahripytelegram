@@ -166,10 +166,17 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
         memory_context = ""
         if user_id:
             try:
+                search_query = raw_text
+
+                # Se l'utente risponde con una frase corta, uniamo l'ultima frase di Ahri per dare contesto alla ricerca
+                if len(raw_text.split()) < 4 and history:
+                    last_ahri_msg = history[-1]["parts"][0]["text"]
+                    search_query = f"Contesto: {last_ahri_msg} - Risposta utente: {raw_text}"
+
                 # cerca i 5 ricordi più rilevanti per questa frase
                 results = await anyio.to_thread.run_sync(
                     lambda: ahri_memory.search(
-                        query=raw_text,
+                        query=search_query,
                         user_id=str(user_id),
                         limit=5
                     )
@@ -203,15 +210,25 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
         if full_response:
             await chat_service.add_message(db, chat_session.id, full_response, datetime.now(timezone.utc), "model")
 
-            # --- SALVA IN MEMORIA CONDIVISA ---
+            # --- SALVA IN MEMORIA CONDIVISA (Migliorato) ---
             if user_id:
                 try:
+                    # Costruiamo una mini-storia degli ultimi 4 messaggi + la risposta attuale
+                    mem0_messages = []
+
+                    # Prendiamo gli ultimi 4 messaggi dalla history che abbiamo già estratto
+                    recent_history = history[-4:] if len(history) >= 4 else history
+                    for msg in recent_history:
+                        role = "user" if msg["role"] == "user" else "assistant"
+                        mem0_messages.append({"role": role, "content": msg["parts"][0]["text"]})
+
+                    # Aggiungiamo la frase attuale dell'utente e la risposta appena generata
+                    mem0_messages.append({"role": "user", "content": raw_text})
+                    mem0_messages.append({"role": "assistant", "content": full_response})
+
                     await anyio.to_thread.run_sync(
                         lambda: ahri_memory.add(
-                            messages=[
-                                {"role": "user", "content": raw_text},
-                                {"role": "assistant", "content": full_response}
-                            ],
+                            messages=mem0_messages, # Ora Mem0 legge l'intero scambio!
                             user_id=str(user_id),
                             metadata={"username": username, "chat_id": str(chat_id), "is_group": is_group}
                         )
