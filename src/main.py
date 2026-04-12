@@ -192,33 +192,39 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
         memory_context = ""
         if user_id:
             try:
-                search_query = raw_text
+                # TRUCCO: Inseriamo il nome dell'utente nella query di ricerca.
+                # In questo modo, mem0 troverà semanticamente messaggi del tipo "Dì a {user_name} che..."
+                search_query = f"L'utente {user_name} (@{username}) ti dice: '{raw_text}'. Ci sono informazioni o messaggi lasciati da altri per lui?"
 
-                # Se l'utente risponde con una frase corta, cerchiamo di dare contesto alla ricerca
                 if len(raw_text.split()) < 13:
                     context_text = ""
-                    # Se è una risposta a un messaggio specifico, usiamo quello come contesto
                     if message_obj.reply_to_message:
                         context_text = message_obj.reply_to_message.text or message_obj.reply_to_message.caption or ""
-                    # Altrimenti usiamo l'ultimo messaggio della cronologia come fallback
                     elif history:
                         context_text = history[-1]["parts"][0]["text"]
 
                     if context_text:
-                        search_query = f"Contesto: {context_text} - Risposta utente: {raw_text}"
+                        search_query = f"Contesto: {context_text} - L'utente {user_name} (@{username}) dice: {raw_text}. Cerca se ci sono info collegate."
 
-                # cerca i 5 ricordi più rilevanti per questa frase
+                # cerca i 5 ricordi più rilevanti
                 results = await anyio.to_thread.run_sync(
                     lambda: ahri_memory.search(
                         query=search_query,
-                        user_id=str(user_id),
+                        agent_id="ahri_bot", # <-- USIAMO L'AGENTE GLOBALE, NON L'UTENTE SINGOLO
                         limit=5
                     )
                 )
                 if results:
-                    # In newer mem0ai versions, search returns a dict like {'results': [...]}
                     mem_list = results.get("results",[]) if isinstance(results, dict) else results
-                    memory_context = "\n".join([f"- {m['memory']}" for m in mem_list if isinstance(m, dict) and 'memory' in m])
+
+                    # Estraiamo l'autore del ricordo dai metadati per dirlo ad Ahri
+                    formatted_memories = []
+                    for m in mem_list:
+                        if isinstance(m, dict) and 'memory' in m:
+                            author = m.get("metadata", {}).get("username", "Qualcuno")
+                            formatted_memories.append(f"- [Ricordo creato da @{author}]: {m['memory']}")
+
+                    memory_context = "\n".join(formatted_memories)
             except Exception as e:
                 print(f"Mem0 search error: {e}")
 
@@ -264,9 +270,14 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
                     await anyio.to_thread.run_sync(
                         lambda: ahri_memory.add(
-                            messages=mem0_messages, # Ora Mem0 legge l'intero scambio!
-                            user_id=str(user_id),
-                            metadata={"username": username, "chat_id": str(chat_id), "is_group": is_group}
+                            messages=mem0_messages,
+                            agent_id="ahri_bot", # <-- SALVA NELLA MENTE GLOBALE DI AHRI
+                            metadata={
+                                "username": username or user_name, # <-- FONDAMENTALE PER SAPERE CHI HA PARLATO
+                                "original_user_id": str(user_id),
+                                "chat_id": str(chat_id),
+                                "is_group": is_group
+                            }
                         )
                     )
                 except Exception as e:
