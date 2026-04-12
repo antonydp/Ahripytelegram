@@ -1,3 +1,8 @@
+import os
+
+# Imposta la directory di mem0 in /tmp per evitare errori di Read-only file system su Vercel
+os.environ["MEM0_DIR"] = "/tmp/.mem0"
+
 import time
 import random
 import re
