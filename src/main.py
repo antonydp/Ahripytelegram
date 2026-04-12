@@ -1,14 +1,11 @@
 import os
-
-# Imposta la directory di mem0 in /tmp per evitare errori su Vercel
-os.environ["MEM0_DIR"] = "/tmp/.mem0"
-
 import time
 import random
 import re
 import anyio
 from sqlalchemy import select
 from src.entities.chat_message import ChatMessage
+from src.entities.diary_entry import DiaryEntry
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -18,7 +15,6 @@ from telegram import Update
 from src.chat_service import ChatService
 from src.enums import TelegramBotCommands
 from src.gemini import Gemini
-from src.memory_manager import ahri_memory
 from src.services.database_service import get_db
 from src.services.telegram_service import TelegramService
 from os import getenv
@@ -35,47 +31,6 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 async def read_root():
     return {"Hello": "World"}
-
-# --- FUNZIONE DIARIO (MEM0) ---
-async def save_memory_background(history_slice, raw_text, full_response, username, user_name, user_id, chat_id):
-    """Analizza la conversazione e scrive una nota nel diario di Ahri"""
-    if not ahri_memory:
-        return
-
-    try:
-        # Identificativo principale dell'utente corrente per il diario
-        display_name = f"@{username}" if username else user_name
-        mem0_messages = []
-
-        # 1. Prepariamo il contesto narrativo per Mem0 (messaggi precedenti)
-        for msg in history_slice:
-            role = "user" if msg["role"] == "user" else "assistant"
-            content = msg['parts'][0]['text']
-            
-            if role == "user":
-                # Recuperiamo chi ha parlato dai metadati del messaggio
-                sender = f"@{msg.get('username')}" if msg.get('username') else "Utente"
-                formatted_content = f"[{sender}]: {content}"
-            else:
-                formatted_content = f"[Ahri]: {content}"
-            
-            mem0_messages.append({"role": role, "content": formatted_content})
-
-        # 2. Aggiungiamo lo scambio attuale
-        mem0_messages.append({"role": "user", "content": f"[{display_name}]: {raw_text}"})
-        mem0_messages.append({"role": "assistant", "content": f"[Ahri]: {full_response}"})
-
-        await anyio.to_thread.run_sync(
-            lambda: ahri_memory.add(
-                messages=mem0_messages,
-                user_id=str(user_id), 
-                agent_id="ahri_bot",
-                metadata={"chat_id": str(chat_id)}
-            )
-        )
-    except Exception as e:
-        print(f"Mem0 Diary Error: {e}")
-# ----------------------------------------
 
 
 @app.post("/webhook")
@@ -157,39 +112,40 @@ async def webhook(request: Request, background_tasks: BackgroundTasks, db: Async
                 prob = int(re.search(r'\d+', ans).group()) if re.search(r'\d+', ans) else 50
                 if prob < random.randint(40, 70): return 'OK'
 
-        # Lettura Diario (Mem0 Search)
+        # --- RECUPERO TUTTO IL DIARIO DELL'UTENTE ---
         memory_diary_context = ""
-        if ahri_memory and user_id and len(raw_text) > 4:
-            try:
-                # Cerchiamo nel diario riferimenti a questo utente e argomento
-                display_name = f"@{username}" if username else user_name
-                query = f"Cosa so di {display_name} riguardo a: {raw_text}"
-                results = await anyio.to_thread.run_sync(lambda: ahri_memory.search(query=query, user_id=str(user_id), limit=3))
-                if results:
-                    m_list = results.get("results",[]) if isinstance(results, dict) else results
-                    notes = [f"✦ Nota dal mio diario: {n['memory']}" for n in m_list if 'memory' in n]
-                    if notes: memory_diary_context = "\n".join(notes)
-            except Exception as e: print(f"Search error: {e}")
+        if user_id:
+            res_diary = await db.execute(
+                select(DiaryEntry).where(DiaryEntry.user_id == user_id).order_by(DiaryEntry.date.asc())
+            )
+            entries = res_diary.scalars().all()
+            if entries:
+                # Uniamo tutte le memorie in un grande blocco di testo
+                notes = [f"- {e.memory_text}" for e in entries]
+                memory_diary_context = "I TUOI RICORDI SU QUESTO UTENTE:\n" + "\n".join(notes)
+        # ----------------------------------------------
 
         # Chat con Gemini
         full_history = await chat_service.get_chat_history(db, chat_session.id)
         if full_history: full_history.pop() # Togliamo l'ultimo per darlo come prompt
 
-        chat = gemini_chat.get_chat(history=full_history, user_name=user_name, username=username, memory_context=memory_diary_context)
+        chat = gemini_chat.get_chat(
+            history=full_history,
+            user_name=user_name,
+            username=username,
+            memory_context=memory_diary_context
+        )
         await telegram_service._telegram_app_bot.send_chat_action(chat_id=chat_id, action="typing")
 
-        if image: resp = await gemini_chat.send_image(prompt, image, chat)
-        elif audio_data: resp = await gemini_chat.send_audio(prompt, audio_data[0], audio_data[1], chat)
-        else: resp = await gemini_chat.send_message(prompt, chat)
+        if image: resp = await gemini_chat.send_image(prompt, image, chat, db=db, user_id=user_id)
+        elif audio_data: resp = await gemini_chat.send_audio(prompt, audio_data[0], audio_data[1], chat, db=db, user_id=user_id)
+        else:
+            # Passiamo db e user_id a send_message
+            resp = await gemini_chat.send_message(prompt, chat, db=db, user_id=user_id)
 
         if resp:
             await chat_service.add_message(db, chat_session.id, resp, datetime.now(timezone.utc), "model")
             await telegram_service.send_message(chat_id=chat_id, text=resp, reply_to_message_id=message_obj.message_id)
-
-            # Salvataggio nel Diario in Background (con 4 messaggi di contesto)
-            if user_id:
-                bg_history = full_history[-4:] if len(full_history) >= 4 else full_history
-                background_tasks.add_task(save_memory_background, bg_history, raw_text, resp, username, user_name, user_id, chat_id)
 
         return 'OK'
     except Exception as error:

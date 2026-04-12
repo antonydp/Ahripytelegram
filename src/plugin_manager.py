@@ -1,6 +1,7 @@
 import asyncio
 from .plugins.weather_plugin import WeatherPlugin
 from .plugins.date_time_plugin import DateTimePlugin
+from .plugins.diary_plugin import DiaryPlugin
 from google.genai.chats import AsyncChat
 
 from google.genai.types import PartDict, FunctionResponseDict, FunctionCall, Part
@@ -16,25 +17,34 @@ class PluginManager:
     def __init__(self):
         self.__date_time_plugin = DateTimePlugin()
         self.__weather_plugin = WeatherPlugin()
+        self.__diary_plugin = DiaryPlugin()
 
     def get_tools(self):
         return [
             self.__date_time_plugin.get_tool(),
-            self.__weather_plugin.get_tool()
+            self.__weather_plugin.get_tool(),
+            self.__diary_plugin.get_tool()
         ]
 
     def get_function_declarations(self):
         return {
             "get_date_time": self.__date_time_plugin.get_date_time,
             "get_current_weather": self.__weather_plugin.get_current_weather,
-            "get_forecast_weather": self.__weather_plugin.get_forecast_weather
+            "get_forecast_weather": self.__weather_plugin.get_forecast_weather,
+            "save_to_diary": self.__diary_plugin.save_to_diary
         }
 
-    async def get_function_response(self, function_call: FunctionCall, chat: AsyncChat) -> PartDict | FunctionResponseDict | None:
+    async def get_function_response(self, function_call: FunctionCall, chat: AsyncChat, db=None, user_id=None) -> PartDict | FunctionResponseDict | None:
         function_declarations = self.get_function_declarations()
 
         if function_call.name in function_declarations:
             args = {key: value for key, value in function_call.args.items()}
+
+            # Iniettiamo db e user_id negli args SOLO per save_to_diary
+            if function_call.name == "save_to_diary":
+                args['db'] = db
+                args['user_id'] = user_id
+
             if asyncio.iscoroutinefunction(function_declarations[function_call.name]):
                 result = await function_declarations[function_call.name](**args)
             else:
