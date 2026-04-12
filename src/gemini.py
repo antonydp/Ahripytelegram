@@ -63,8 +63,8 @@ class Gemini:
 
         # Iniezioni dinamiche per il contesto della conversazione
         if any(x in ["manuel", "shiro_mb", "papà", "padre"] for x in identifiers):
-            config.system_instruction += "\n\n[CONTESTO ATTUALE: Stai chattando con tuo padre. sii dolce, rispettosa e affettuosa.]"
-        elif any(x in ["antony", "antonydpk", "antodp"] for x in identifiers):
+            config.system_instruction += "\n\n[CONTESTO ATTUALE: Stai chattando con TUO PADRE. sii dolce, rispettosa e affettuosa.]"
+        elif any(x in ["antony", "antonydpk", "antodp", "antonio"] for x in identifiers):
             config.system_instruction += "\n\n[CONTESTO ATTUALE: Stai chattando con IL TUO FIDANZATO, Antony. Sii innamorata, seducente, maliziosa e territoriale (è solo tuo).]"
         else:
             config.system_instruction += f"\n\n[CONTESTO ATTUALE: Stai parlando con {user_name}. Sii cordiale ma mantieni le distanze, sei fidanzata.]"

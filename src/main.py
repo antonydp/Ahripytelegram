@@ -104,13 +104,20 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
         last_user_msg = result.scalar_one_or_none()
 
         if last_user_msg:
-            msg_date = last_user_msg.date
-            if msg_date.tzinfo is None:
-                msg_date = msg_date.replace(tzinfo=timezone.utc)
+            # Data originale del messaggio in arrivo da Telegram
+            tg_msg_date = message_obj.date
+            if tg_msg_date.tzinfo is None:
+                tg_msg_date = tg_msg_date.replace(tzinfo=timezone.utc)
 
-            diff = (datetime.now(timezone.utc) - msg_date).total_seconds()
-            # Se lo stesso messaggio è arrivato meno di 30 secondi fa, è un retry di Telegram. Lo ignoriamo.
-            if diff < 30:
+            # Data del messaggio che avevamo già salvato nel DB
+            db_msg_date = last_user_msg.date
+            if db_msg_date.tzinfo is None:
+                db_msg_date = db_msg_date.replace(tzinfo=timezone.utc)
+
+            # Se la differenza tra le due date di invio è minima (tolleranza di 2 secondi per i troncamenti del DB),
+            # si tratta ESATTAMENTE dello stesso messaggio ritrasmesso da Telegram. Lo ignoriamo, a prescindere
+            # da quanti secondi/minuti sono passati da datetime.now()
+            if abs((tg_msg_date - db_msg_date).total_seconds()) < 2:
                 print("Messaggio duplicato (Retry di Telegram). Ignorato.")
                 return 'OK'
         # --- FINE FIX ---
