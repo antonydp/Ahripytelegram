@@ -54,7 +54,7 @@ if MEM0_ENABLED:
             "llm": {
                 "provider": "gemini",
                 "config": {
-                    "model": "gemini-2.5-flash",
+                    "model": "gemma-4-26b-a4b-it",
                     "api_key": os.getenv("GEMINI_API_KEY"),
                     "temperature": 0.1,
                 }
@@ -62,7 +62,7 @@ if MEM0_ENABLED:
             "embedder": {
                 "provider": "gemini",
                 "config": {
-                    "model": "models/text-embedding-004",
+                    "model": "gemini-embedding-2-preview",
                     "api_key": os.getenv("GEMINI_API_KEY"),
                     "embedding_dims": 768,
                 }
