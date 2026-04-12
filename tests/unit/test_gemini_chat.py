@@ -85,3 +85,48 @@ async def test_get_chat_with_user_name():
     assert kwargs['model'] == "gemini-2.5-flash"
     assert kwargs['history'] == mock_history
     assert "Mario" in kwargs['config'].system_instruction
+
+@pytest.mark.asyncio
+async def test_get_chat_father_by_username():
+    # Setup
+    with patch("src.gemini.genai.Client") as mock_client_class:
+        mock_aio_client = MagicMock()
+        mock_client_class.return_value.aio = mock_aio_client
+        gemini = Gemini()
+
+    # Execute
+    gemini.get_chat(history=[], user_name="SomeName", username="shiro_mb")
+
+    # Assert
+    args, kwargs = mock_aio_client.chats.create.call_args
+    assert "TUO PADRE" in kwargs['config'].system_instruction
+
+@pytest.mark.asyncio
+async def test_get_chat_boyfriend_by_username():
+    # Setup
+    with patch("src.gemini.genai.Client") as mock_client_class:
+        mock_aio_client = MagicMock()
+        mock_client_class.return_value.aio = mock_aio_client
+        gemini = Gemini()
+
+    # Execute
+    gemini.get_chat(history=[], user_name="SomeName", username="antonydpk")
+
+    # Assert
+    args, kwargs = mock_aio_client.chats.create.call_args
+    assert "IL TUO FIDANZATO" in kwargs['config'].system_instruction
+
+@pytest.mark.asyncio
+async def test_get_chat_boyfriend_by_name_antonio():
+    # Setup
+    with patch("src.gemini.genai.Client") as mock_client_class:
+        mock_aio_client = MagicMock()
+        mock_client_class.return_value.aio = mock_aio_client
+        gemini = Gemini()
+
+    # Execute
+    gemini.get_chat(history=[], user_name="Antonio")
+
+    # Assert
+    args, kwargs = mock_aio_client.chats.create.call_args
+    assert "IL TUO FIDANZATO" in kwargs['config'].system_instruction

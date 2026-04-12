@@ -197,7 +197,12 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
                 print(f"Mem0 search error: {e}")
 
 
-        chat = gemini_chat.get_chat(history=history, user_name=user_name, memory_context=memory_context)
+        chat = gemini_chat.get_chat(
+            history=history,
+            user_name=user_name,
+            username=username,
+            memory_context=memory_context
+        )
         
         # Invia l'azione "Sta scrivendo..." a Telegram per rassicurare l'utente durante l'attesa
         await telegram_service._telegram_app_bot.send_chat_action(chat_id=chat_id, action="typing")

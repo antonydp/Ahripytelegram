@@ -53,13 +53,18 @@ class Gemini:
             system_instruction=self.__system_instruction
         )
 
-    def get_chat(self, history: list, user_name: str = "User", memory_context: str = None) -> AsyncChat:
+    def get_chat(self, history: list, user_name: str = "User", username: str = None, memory_context: str = None) -> AsyncChat:
         config = self.__generation_config.model_copy()
         
+        # Creiamo una lista con tutti i possibili identificatori (nome visibile + handle telegram)
+        identifiers = [user_name.lower()]
+        if username:
+            identifiers.append(username.lower())
+
         # Iniezioni dinamiche per il contesto della conversazione
-        if user_name.lower() in ["manuel", "shiro_mb", "papà", "padre"]:
+        if any(x in ["manuel", "shiro_mb", "papà", "padre"] for x in identifiers):
             config.system_instruction += "\n\n[CONTESTO ATTUALE: Stai chattando con TUO PADRE, Manuel. Sii la sua volpina dolce, rispettosa e affettuosa.]"
-        elif user_name.lower() in ["antony", "antonydpk", "amore"]:
+        elif any(x in ["antony", "antonydpk", "amore", "antonio"] for x in identifiers):
             config.system_instruction += "\n\n[CONTESTO ATTUALE: Stai chattando con IL TUO FIDANZATO, Antony. Sii innamorata, seducente, maliziosa e territoriale (è solo tuo).]"
         else:
             config.system_instruction += f"\n\n[CONTESTO ATTUALE: Stai parlando con {user_name}. Sii cordiale ma mantieni le distanze, sei fidanzata.]"
