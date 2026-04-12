@@ -43,47 +43,34 @@ async def save_memory_background(history_slice, raw_text, full_response, usernam
         return
 
     try:
-        display_name = user_name # Usiamo il nome reale per il diario
+        # Identificativo principale dell'utente corrente per il diario
+        display_name = f"@{username}" if username else user_name
         mem0_messages = []
 
-        # 1. Prepariamo il contesto narrativo per Mem0
+        # 1. Prepariamo il contesto narrativo per Mem0 (messaggi precedenti)
         for msg in history_slice:
             role = "user" if msg["role"] == "user" else "assistant"
             content = msg['parts'][0]['text']
             
             if role == "user":
-                formatted_content = f"{display_name} ha detto: \"{content}\""
+                # Recuperiamo chi ha parlato dai metadati del messaggio
+                sender = f"@{msg.get('username')}" if msg.get('username') else "Utente"
+                formatted_content = f"[{sender}]: {content}"
             else:
-                formatted_content = f"Io (Ahri) ho risposto: \"{content}\""
+                formatted_content = f"[Ahri]: {content}"
             
             mem0_messages.append({"role": role, "content": formatted_content})
 
         # 2. Aggiungiamo lo scambio attuale
-        mem0_messages.append({"role": "user", "content": f"{display_name} mi ha appena detto: \"{raw_text}\""})
-        mem0_messages.append({"role": "assistant", "content": f"Io gli ho risposto: \"{full_response}\""})
-
-        # PROMPT DIARIO: Scrive fatti concreti iniziando col nome dell'utente
-        extraction_prompt = f"""
-        Agisci come la memoria profonda di Ahri. Il tuo compito è scrivere una breve nota nel suo diario personale.
-        Analizza i messaggi e scrivi un SOLO fatto concreto e nuovo emerso.
-
-        REGOLE DEL DIARIO:
-        - Inizia la frase SEMPRE con il nome "{display_name}".
-        - Salva SOLO fatti, segreti, accordi, prezzi, password o preferenze reali.
-        - Ignora totalmente: complimenti, poesie, frasi d'amore e saluti.
-        - Se non c'è nulla di concreto da ricordare, non scrivere nulla.
-        - Non usare mai la parola "utente".
-        
-        Esempio di output: "{display_name} ha ottenuto uno sconto di 500G sullo Zhonya in cambio di un'uscita con me."
-        """
+        mem0_messages.append({"role": "user", "content": f"[{display_name}]: {raw_text}"})
+        mem0_messages.append({"role": "assistant", "content": f"[Ahri]: {full_response}"})
 
         await anyio.to_thread.run_sync(
             lambda: ahri_memory.add(
                 messages=mem0_messages,
                 user_id=str(user_id), 
                 agent_id="ahri_bot",
-                prompt=extraction_prompt,
-                metadata={"chat_id": str(chat_id)} # Semplificato al massimo
+                metadata={"chat_id": str(chat_id)}
             )
         )
     except Exception as e:
@@ -175,7 +162,8 @@ async def webhook(request: Request, background_tasks: BackgroundTasks, db: Async
         if ahri_memory and user_id and len(raw_text) > 4:
             try:
                 # Cerchiamo nel diario riferimenti a questo utente e argomento
-                query = f"Cosa so di {user_name} riguardo a: {raw_text}"
+                display_name = f"@{username}" if username else user_name
+                query = f"Cosa so di {display_name} riguardo a: {raw_text}"
                 results = await anyio.to_thread.run_sync(lambda: ahri_memory.search(query=query, user_id=str(user_id), limit=3))
                 if results:
                     m_list = results.get("results",[]) if isinstance(results, dict) else results
