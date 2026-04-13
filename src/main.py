@@ -104,7 +104,7 @@ async def process_telegram_message(request_data: dict):
             if not raw_text: raw_text = "ha inviato un media"
 
             # Salvataggio messaggio utente
-            prompt = f"{user_name}: {raw_text}"
+            prompt = f"{user_name}: {raw_text}\n\n[SISTEMA: Considera attentamente se quanto appena detto merita di essere salvato nel diario o se richiede l'aggiornamento di un ricordo esistente tramite ID.]"
             await chat_service.add_message(db, chat_session.id, prompt, message_obj.date, "user", user_id=user_id, username=username)
 
             # Decisione per i Gruppi (Randomness)
@@ -132,7 +132,7 @@ async def process_telegram_message(request_data: dict):
             entries = res_diary.scalars().all()
             
             if entries:
-                raw_notes = [e.memory_text for e in entries]
+                raw_notes = [f"[ID: {e.id}] {e.memory_text}" for e in entries]
                 # Estraiamo solo i segreti/ricordi pertinenti a QUESTO utente o a chi viene nominato
                 relevant_memory = await gemini_chat.extract_relevant_memories(user_name, raw_text, raw_notes)
 

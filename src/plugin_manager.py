@@ -31,7 +31,8 @@ class PluginManager:
             "get_date_time": self.__date_time_plugin.get_date_time,
             "get_current_weather": self.__weather_plugin.get_current_weather,
             "get_forecast_weather": self.__weather_plugin.get_forecast_weather,
-            "save_to_diary": self.__diary_plugin.save_to_diary
+            "save_to_diary": self.__diary_plugin.save_to_diary,
+            "update_diary": self.__diary_plugin.update_diary
         }
 
     async def get_function_response(self, function_call: FunctionCall, chat: AsyncChat, db=None, user_id=None) -> PartDict | FunctionResponseDict | None:
@@ -40,10 +41,12 @@ class PluginManager:
         if function_call.name in function_declarations:
             args = {key: value for key, value in function_call.args.items()}
 
-            # Iniettiamo db e user_id negli args SOLO per save_to_diary
+            # Iniettiamo db e user_id negli args per i plugin del diario
             if function_call.name == "save_to_diary":
                 args['db'] = db
                 args['user_id'] = user_id
+            elif function_call.name == "update_diary":
+                args['db'] = db
 
             if asyncio.iscoroutinefunction(function_declarations[function_call.name]):
                 result = await function_declarations[function_call.name](**args)
