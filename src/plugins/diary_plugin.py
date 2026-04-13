@@ -6,9 +6,10 @@ class DiaryPlugin:
     def __init__(self):
         self.name: str = "save_to_diary"
         self.description: str = (
-            "Usa questo strumento SOLO quando l'utente ti rivela un'informazione "
-            "importante su di sé (preferenze, segreti, eventi passati, legami) "
-            "che vuoi ricordare per sempre. NON usarlo per chiacchiere."
+            "Usa questo strumento AUTONOMAMENTE per salvare un'informazione permanente nella tua Memoria Globale (Diario). "
+            "Essendo una memoria CONDIVISA tra tutti gli utenti, DEVI ASSOLUTAMENTE specificare il NOME DELLA PERSONA di cui parli o che ti ha rivelato la cosa. "
+            "Esempio corretto: 'Marco mi ha confidato che ama la pizza' oppure 'Ho scoperto che Antony odia il lunedì'. "
+            "Esempio SBAGLIATO: 'L'utente ama la pizza'."
         )
 
         self.parameters = Schema(
@@ -17,7 +18,7 @@ class DiaryPlugin:
             properties={
                 "memory": {
                     "type": Type.STRING,
-                    "description": "L'informazione da salvare in terza persona. Es: 'L'utente ama il sushi e odia il caldo'.",
+                    "description": "Il fatto o segreto da ricordare, descritto in terza persona includendo sempre i Nomi propri dei soggetti coinvolti.",
                 }
             }
         )
@@ -34,18 +35,18 @@ class DiaryPlugin:
         )
 
     async def save_to_diary(self, memory: str, **kwargs) -> str:
-        """Salva la memoria nel DB. kwargs contiene db e user_id iniettati da noi."""
+        """Salva la memoria nel DB. kwargs contiene db e user_id iniettati."""
         db: AsyncSession = kwargs.get('db')
         user_id: int = kwargs.get('user_id')
 
         if not db or not user_id:
-            return "Errore: Connessione al diario fallita."
+            return "Errore: Connessione alla Memoria Globale fallita."
 
         try:
             entry = DiaryEntry(user_id=user_id, memory_text=memory)
             db.add(entry)
             await db.commit()
-            print(f"Ahri ha salvato un ricordo: {memory}")
+            print(f"Ahri ha salvato un ricordo nella Memoria Globale: {memory}")
             return f"Ricordo salvato nel diario con successo: {memory}"
         except Exception as e:
             print(f"Errore salvataggio diario: {e}")
