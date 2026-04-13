@@ -8,9 +8,17 @@ from .plugin_manager import PluginManager
 
 class Gemini:
     
-    def __init__(self, model_name: str = None, system_instruction: str = None):
+    def __init__(self, model_name: str = None, system_instruction: str = None, is_decision_model: bool = False):
         self.__plugin_manager = PluginManager()
-        self.__model_name = model_name or getenv('GEMINI_MODEL_NAME') or Config.DEFAULT_GEMINI_MODEL_NAME
+
+        # Logica di selezione del modello: prioritize specifici, fallback su GEMINI_MODEL_NAME, poi default
+        if model_name:
+            self.__model_name = model_name
+        elif is_decision_model:
+            self.__model_name = getenv('GEMINI_DECISION_MODEL') or getenv('GEMINI_MODEL_NAME') or Config.DEFAULT_GEMINI_MODEL_NAME
+        else:
+            self.__model_name = getenv('GEMINI_CHAT_MODEL') or getenv('GEMINI_MODEL_NAME') or Config.DEFAULT_GEMINI_MODEL_NAME
+
         self.__client = genai.Client(api_key=getenv('GEMINI_API_KEY')).aio
 
         # --- LTM (LONG-TERM MEMORY) E PROTOCOLLO MDRP ---
