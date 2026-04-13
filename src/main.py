@@ -117,7 +117,7 @@ async def process_telegram_message(request_data: dict):
             await chat_service.add_message(db, chat_session.id, db_msg_text, message_obj.date, "user", user_id=user_id, username=username)
 
             # Wait period for debouncing
-            await asyncio.sleep(3)
+            await asyncio.sleep(4.5)
             if last_message_at.get(chat_id) != my_timestamp:
                 return
 
@@ -142,23 +142,22 @@ async def process_telegram_message(request_data: dict):
                 is_tag = f"@{bot_user.username}" in (message_obj.text or message_obj.caption or "")
                 if not (is_reply or is_tag):
                     gemini_decision = Gemini(
-                        system_instruction="Sei un bot router. Rispondi SOLO con un numero (0-100) indicando la probabilità che Ahri debba rispondere a questo contesto.",
+                        system_instruction="""Sei il filtro decisionale di Ahri (una Vastaya mistica).
+Il tuo compito è decidere se Ahri deve rispondere al messaggio aggregato basandoti sul contesto della chat.
+Rispondi SOLO con un numero da 0 a 100.
+
+REGOLE STRINGENTI:
+- Se l'utente sta parlando di fatti generali senza menzionare lei, i suoi temi (anime, magia, Runeterra) o senza rivolgersi a lei, dai un punteggio molto basso (0-20).
+- Se l'utente la interroga, la nomina o parla di qualcosa che tocca la sua natura predatrice/sensoriale, dai un punteggio alto (80-100).
+- Se c'è un dubbio, sii conservativa: Ahri è una creatura altera e non si intromette in ogni discorso banale dei mortali.""",
                         is_decision_model=True
                     )
-                    hist = await chat_service.get_chat_history(db, chat_session.id, limit=5)
+                    hist = await chat_service.get_chat_history(db, chat_session.id, limit=10)
                     ctx = "\n".join([f"{m['role']}: {m['parts'][0]['text']}" for m in hist])
-                    ans = await gemini_decision.send_message(f"Contesto:\n{ctx}\nProbabilità risposta (0-100)?", gemini_decision.get_chat([]))
+                    ans = await gemini_decision.send_message(f"CONTESTO RECENTE:\n{ctx}\n\nNUOVO MESSAGGIO AGGREGATO:\n{aggregated_text}\n\nProbabilità che Ahri intervenga (0-100)?", gemini_decision.get_chat([]))
                     prob = int(re.search(r'\d+', ans).group()) if re.search(r'\d+', ans) else 50
 
-                    # Penalità se il bot ha parlato di recente (< 25 secondi)
-                    last_bot_msg = await chat_service.get_last_bot_message(db, chat_session.id)
-                    if last_bot_msg:
-                        last_date = last_bot_msg.date.replace(tzinfo=timezone.utc) if last_bot_msg.date.tzinfo is None else last_bot_msg.date
-                        now = datetime.now(timezone.utc)
-                        if (now - last_date).total_seconds() < 25:
-                            prob -= 40
-
-                    if prob < random.randint(45, 75):
+                    if prob < random.randint(50, 80):
                         return
 
             # ==========================================
