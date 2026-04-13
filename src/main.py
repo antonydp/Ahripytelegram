@@ -2,10 +2,11 @@ import os
 import time
 import random
 import re
+import asyncio
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Request, BackgroundTasks, Response
+from fastapi import FastAPI, Request, BackgroundTasks, Response
 from telegram import Update
 from sqlalchemy import select
 
@@ -16,12 +17,8 @@ from src.enums import TelegramBotCommands
 from src.gemini import Gemini
 from src.services.database_service import AsyncSessionLocal
 from src.services.telegram_service import TelegramService
-import asyncio
 
 load_dotenv()
-
-# Stato globale per il raggruppamento dei messaggi (debouncing)
-last_message_at = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,7 +29,6 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 async def read_root():
     return {"status": "Ahri is running", "memory": "Global Shared Brain Active"}
-
 
 @app.post("/webhook")
 async def webhook(request: Request, background_tasks: BackgroundTasks):
@@ -47,16 +43,17 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
     # Deleghiamo l'elaborazione al Background Task
     background_tasks.add_task(process_telegram_message, request_data)
     
-    # Rispondiamo SUBITO 200 OK a Telegram (evita i timeout di 15 secondi)
+    # Rispondiamo SUBITO 200 OK a Telegram (fondamentale per evitare retry infiniti)
     return Response(content="OK", status_code=200)
 
 
 async def process_telegram_message(request_data: dict):
-    """Logica core del bot eseguita in background."""
+    """Logica core con debouncing basato su Database (ottimizzato per Vercel)."""
     async with AsyncSessionLocal() as db:
         try:
             telegram_service = TelegramService()
             gemini_chat = Gemini()
+            chat_service = ChatService()
             
             telegram_update = Update.de_json(request_data, telegram_service._telegram_app_bot)
             message_obj = telegram_update.message or telegram_update.edited_message or telegram_update.channel_post
@@ -65,21 +62,14 @@ async def process_telegram_message(request_data: dict):
                 return
 
             chat_id = message_obj.chat_id
-
-            # Debouncing logic: Update timestamp for this chat
-            my_timestamp = time.time()
-            last_message_at[chat_id] = my_timestamp
-
-            is_group = message_obj.chat.type in ['group', 'supergroup']
             bot_user = await telegram_service.get_me()
-            chat_service = ChatService()
             chat_session = await chat_service.get_or_create_session(db, chat_id)
 
             user_name = message_obj.from_user.first_name if message_obj.from_user else "User"
             user_id = message_obj.from_user.id if message_obj.from_user else None
             username = message_obj.from_user.username if message_obj.from_user else None
 
-            # Comandi di base
+            # 1. Comandi di base
             if message_obj.text == TelegramBotCommands.START:
                 await telegram_service.send_start_message(chat_id=chat_id)
                 return
@@ -88,17 +78,7 @@ async def process_telegram_message(request_data: dict):
                 await telegram_service.send_new_chat_message(chat_id=chat_id)
                 return
             
-            # Filtro anti-duplicati
-            tg_msg_date = message_obj.date.replace(tzinfo=timezone.utc) if message_obj.date.tzinfo is None else message_obj.date
-            stmt = select(ChatMessage).where(ChatMessage.chat_id == chat_session.id, ChatMessage.role == 'user').order_by(ChatMessage.date.desc()).limit(1)
-            res = await db.execute(stmt)
-            last_m = res.scalar_one_or_none()
-            if last_m:
-                db_d = last_m.date.replace(tzinfo=timezone.utc) if last_m.date.tzinfo is None else last_m.date
-                if abs((tg_msg_date - db_d).total_seconds()) < 2: 
-                    return
-
-            # Elaborazione Media
+            # 2. Elaborazione Media/Testo
             image, audio_data, media_desc = None, None, ""
             caption = (message_obj.text or message_obj.caption or "").replace(f"@{bot_user.username}", "").strip()
 
@@ -112,76 +92,74 @@ async def process_telegram_message(request_data: dict):
             raw_text = caption if not media_desc else (f"[{media_desc}] {caption}" if caption else media_desc)
             if not raw_text: raw_text = "ha inviato un media"
 
-            # Salvataggio messaggio utente nel DB immediato (testo pulito)
+            # 3. SALVATAGGIO IMMEDIATO (Punto di sincronizzazione)
             db_msg_text = f"{user_name}: {raw_text}"
-            await chat_service.add_message(db, chat_session.id, db_msg_text, message_obj.date, "user", user_id=user_id, username=username)
+            current_user_msg = await chat_service.add_message(
+                db, chat_session.id, db_msg_text, message_obj.date, "user", user_id=user_id, username=username
+            )
 
-            # Wait period for debouncing
-            await asyncio.sleep(4.5)
-            if last_message_at.get(chat_id) != my_timestamp:
+            # 4. ATTESA BURST (Debouncing)
+            # Aspettiamo che l'utente finisca di inviare messaggi a raffica
+            await asyncio.sleep(5.0)
+
+            # 5. CONTROLLO CENTRALIZZATO (DATABASE)
+            # Verifichiamo se questo messaggio è ancora l'ultimo inviato dall'utente
+            stmt_latest = select(ChatMessage).where(
+                ChatMessage.chat_id == chat_session.id, 
+                ChatMessage.role == 'user'
+            ).order_by(ChatMessage.id.desc()).limit(1)
+            
+            res_latest = await db.execute(stmt_latest)
+            latest_msg_in_db = res_latest.scalar_one_or_none()
+
+            # Se esiste un messaggio con ID più alto, questa istanza si ferma (lascia fare alla successiva)
+            if latest_msg_in_db and latest_msg_in_db.id != current_user_msg.id:
                 return
 
-            # Aggregazione messaggi (Burst)
+            # 6. AGGREGAZIONE BURST
+            # Recuperiamo tutti i messaggi dell'utente arrivati dopo l'ultima risposta del bot
             last_bot_msg = await chat_service.get_last_bot_message(db, chat_session.id)
-            stmt = select(ChatMessage).where(ChatMessage.chat_id == chat_session.id, ChatMessage.role == 'user')
+            stmt_burst = select(ChatMessage).where(ChatMessage.chat_id == chat_session.id, ChatMessage.role == 'user')
             if last_bot_msg:
-                stmt = stmt.where(ChatMessage.date > last_bot_msg.date)
-            stmt = stmt.order_by(ChatMessage.date.asc())
+                stmt_burst = stmt_burst.where(ChatMessage.id > last_bot_msg.id)
+            stmt_burst = stmt_burst.order_by(ChatMessage.id.asc())
 
-            res_messages = await db.execute(stmt)
-            messages = res_messages.scalars().all()
-            num_messages_in_burst = len(messages)
+            res_burst = await db.execute(stmt_burst)
+            burst_messages = res_burst.scalars().all()
+            num_messages_in_burst = len(burst_messages)
+            aggregated_text = "\n".join([m.text for m in burst_messages])
 
-            # Costruiamo il prompt aggregato e aggiungiamo il reminder di sistema una sola volta
-            aggregated_text = "\n".join([m.text for m in messages])
-            prompt = f"{aggregated_text}\n\n[SISTEMA: Considera attentamente se quanto appena detto merita di essere salvato nel diario o se richiede l'aggiornamento di un ricordo esistente tramite ID.]"
-
-            # Decisione per i Gruppi (Randomness)
+            # 7. LOGICA GRUPPI (Randomness/Interesse)
+            is_group = message_obj.chat.type in ['group', 'supergroup']
             if is_group:
                 is_reply = message_obj.reply_to_message and message_obj.reply_to_message.from_user.id == bot_user.id
                 is_tag = f"@{bot_user.username}" in (message_obj.text or message_obj.caption or "")
+                
                 if not (is_reply or is_tag):
-                    gemini_decision = Gemini(
-                        system_instruction="""Sei il filtro decisionale di Ahri (una Vastaya mistica).
-Il tuo compito è decidere se Ahri deve rispondere al messaggio aggregato basandoti sul contesto della chat.
-Rispondi SOLO con un numero da 0 a 100.
-
-REGOLE STRINGENTI:
-- Se l'utente sta parlando di fatti generali senza menzionare lei, i suoi temi (anime, magia, Runeterra) o senza rivolgersi a lei, dai un punteggio molto basso (0-20).
-- Se l'utente la interroga, la nomina o parla di qualcosa che tocca la sua natura predatrice/sensoriale, dai un punteggio alto (80-100).
-- Se c'è un dubbio, sii conservativa: Ahri è una creatura altera e non si intromette in ogni discorso banale dei mortali.""",
-                        is_decision_model=True
+                    gemini_decision = Gemini(is_decision_model=True)
+                    # Forniamo un contesto minimo per la decisione
+                    ans = await gemini_decision.send_message(
+                        f"Messaggio aggregato da valutare:\n{aggregated_text}\n\nAhri deve rispondere? Rispondi solo con un numero 0-100.", 
+                        gemini_decision.get_chat([])
                     )
-                    hist = await chat_service.get_chat_history(db, chat_session.id, limit=10)
-                    ctx = "\n".join([f"{m['role']}: {m['parts'][0]['text']}" for m in hist])
-                    ans = await gemini_decision.send_message(f"CONTESTO RECENTE:\n{ctx}\n\nNUOVO MESSAGGIO AGGREGATO:\n{aggregated_text}\n\nProbabilità che Ahri intervenga (0-100)?", gemini_decision.get_chat([]))
                     prob = int(re.search(r'\d+', ans).group()) if re.search(r'\d+', ans) else 50
-
-                    if prob < random.randint(50, 80):
+                    if prob < random.randint(40, 70):
                         return
 
-            # ==========================================
-            # MEMORIA GLOBALE INTELLIGENTE (SHARED BRAIN)
-            # ==========================================
+            # 8. MEMORIA GLOBALE (Shared Brain)
             relevant_memory = ""
-            
-            # Recuperiamo le ultime 200 memorie GLOBALI (di tutti gli utenti)
-            res_diary = await db.execute(
-                select(DiaryEntry).order_by(DiaryEntry.date.desc()).limit(200)
-            )
+            res_diary = await db.execute(select(DiaryEntry).order_by(DiaryEntry.id.desc()).limit(150))
             entries = res_diary.scalars().all()
-            
             if entries:
                 raw_notes = [f"[ID: {e.id}] {e.memory_text}" for e in entries]
-                # Estraiamo solo i segreti/ricordi pertinenti a QUESTO utente o a chi viene nominato (usando il burst aggregato)
                 relevant_memory = await gemini_chat.extract_relevant_memories(user_name, aggregated_text, raw_notes)
 
-            # Preparazione Chat History per Ahri (escludiamo l'intero burst attuale)
+            # 9. PREPARAZIONE CONTESTO E INVIO
             full_history = await chat_service.get_chat_history(db, chat_session.id)
+            # Rimuoviamo i messaggi del burst attuale dalla history (perché li mandiamo come prompt unico)
             for _ in range(num_messages_in_burst):
                 if full_history: full_history.pop()
 
-            # Creazione della chat (Iniezione STM + LTM)
             chat = gemini_chat.get_chat(
                 history=full_history,
                 user_name=user_name,
@@ -191,7 +169,9 @@ REGOLE STRINGENTI:
             
             await telegram_service._telegram_app_bot.send_chat_action(chat_id=chat_id, action="typing")
 
-            # Invio Messaggio a Gemini con Fallback
+            # Reminder di sistema per il diario
+            prompt = f"{aggregated_text}\n\n[SISTEMA: Ricorda di usare save_to_diary se hai appreso nuovi dettagli importanti.]"
+
             try:
                 if image:
                     resp = await gemini_chat.send_image(prompt, image, chat, db=db, user_id=user_id)
@@ -199,31 +179,18 @@ REGOLE STRINGENTI:
                     resp = await gemini_chat.send_audio(prompt, audio_data[0], audio_data[1], chat, db=db, user_id=user_id)
                 else:
                     resp = await gemini_chat.send_message(prompt, chat, db=db, user_id=user_id)
-            except Exception as e:
-                print(f"Errore chiamata Gemini: {e}. Provo il fallback al modello decisionale.")
-                # Fallback al modello decisionale (Gemma4 o equivalente configurato)
+            except Exception:
+                # Fallback rapido
                 fallback_gemini = Gemini(is_decision_model=True)
-                fallback_chat = fallback_gemini.get_chat(
-                    history=full_history,
-                    user_name=user_name,
-                    username=username,
-                    memory_context=relevant_memory
-                )
-                if image:
-                    resp = await fallback_gemini.send_image(prompt, image, fallback_chat, db=db, user_id=user_id)
-                elif audio_data:
-                    resp = await fallback_gemini.send_audio(prompt, audio_data[0], audio_data[1], fallback_chat, db=db, user_id=user_id)
-                else:
-                    resp = await fallback_gemini.send_message(prompt, fallback_chat, db=db, user_id=user_id)
+                resp = await fallback_gemini.send_message(aggregated_text, fallback_gemini.get_chat(full_history))
 
-            # Salvataggio e Invio risposta
+            # 10. RISPOSTA FINALE
             if resp:
                 await chat_service.add_message(db, chat_session.id, resp, datetime.now(timezone.utc), "model")
                 await telegram_service.send_message(chat_id=chat_id, text=resp, reply_to_message_id=message_obj.message_id)
 
         except Exception as error:
-            print(f"Global Error processing task: {error}")
+            print(f"Global Error: {error}")
             try:
-                await telegram_service.send_message(chat_id=chat_id, text="C'è un'interferenza nella magia... mi perdoni? 🌙💙")
-            except: 
-                pass
+                await telegram_service.send_message(chat_id=chat_id, text="Le nebbie di Ionia mi impediscono di rispondere... 🌙💙")
+            except: pass
