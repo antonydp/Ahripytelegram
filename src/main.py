@@ -112,12 +112,24 @@ async def process_telegram_message(request_data: dict):
                 is_reply = message_obj.reply_to_message and message_obj.reply_to_message.from_user.id == bot_user.id
                 is_tag = f"@{bot_user.username}" in (message_obj.text or message_obj.caption or "")
                 if not (is_reply or is_tag):
-                    gemini_decision = Gemini(system_instruction="Sei un bot router. Rispondi SOLO con un numero (0-100) indicando la probabilità che Ahri debba rispondere a questo contesto.")
+                    gemini_decision = Gemini(
+                        system_instruction="Sei un bot router. Rispondi SOLO con un numero (0-100) indicando la probabilità che Ahri debba rispondere a questo contesto.",
+                        is_decision_model=True
+                    )
                     hist = await chat_service.get_chat_history(db, chat_session.id, limit=5)
                     ctx = "\n".join([f"{m['role']}: {m['parts'][0]['text']}" for m in hist])
                     ans = await gemini_decision.send_message(f"Contesto:\n{ctx}\nProbabilità risposta (0-100)?", gemini_decision.get_chat([]))
                     prob = int(re.search(r'\d+', ans).group()) if re.search(r'\d+', ans) else 50
-                    if prob < random.randint(40, 70): 
+
+                    # Penalità se il bot ha parlato di recente (< 25 secondi)
+                    last_bot_msg = await chat_service.get_last_bot_message(db, chat_session.id)
+                    if last_bot_msg:
+                        last_date = last_bot_msg.date.replace(tzinfo=timezone.utc) if last_bot_msg.date.tzinfo is None else last_bot_msg.date
+                        now = datetime.now(timezone.utc)
+                        if (now - last_date).total_seconds() < 25:
+                            prob -= 40
+
+                    if prob < random.randint(45, 75):
                         return
 
             # ==========================================
