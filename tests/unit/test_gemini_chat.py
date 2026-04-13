@@ -99,7 +99,7 @@ async def test_get_chat_father_by_username():
 
     # Assert
     args, kwargs = mock_aio_client.chats.create.call_args
-    assert "TUO PADRE" in kwargs['config'].system_instruction
+    assert "Papà" in kwargs['config'].system_instruction
 
 @pytest.mark.asyncio
 async def test_get_chat_boyfriend_by_username():
@@ -114,7 +114,7 @@ async def test_get_chat_boyfriend_by_username():
 
     # Assert
     args, kwargs = mock_aio_client.chats.create.call_args
-    assert "IL TUO FIDANZATO" in kwargs['config'].system_instruction
+    assert "Fidanzato" in kwargs['config'].system_instruction
 
 @pytest.mark.asyncio
 async def test_get_chat_boyfriend_by_name_antonio():
@@ -129,4 +129,4 @@ async def test_get_chat_boyfriend_by_name_antonio():
 
     # Assert
     args, kwargs = mock_aio_client.chats.create.call_args
-    assert "IL TUO FIDANZATO" in kwargs['config'].system_instruction
+    assert "Fidanzato" in kwargs['config'].system_instruction

@@ -5,11 +5,12 @@ from src.entities.diary_entry import DiaryEntry
 class DiaryPlugin:
     def __init__(self):
         self.name: str = "save_to_diary"
+        # Descrizione potenziata per incoraggiare l'uso frequente
         self.description: str = (
-            "Usa questo strumento AUTONOMAMENTE per salvare un'informazione permanente nella tua Memoria Globale (Diario). "
-            "Essendo una memoria CONDIVISA tra tutti gli utenti, DEVI ASSOLUTAMENTE specificare il NOME DELLA PERSONA di cui parli o che ti ha rivelato la cosa. "
-            "Esempio corretto: 'Marco mi ha confidato che ama la pizza' oppure 'Ho scoperto che Antony odia il lunedì'. "
-            "Esempio SBAGLIATO: 'L'utente ama la pizza'."
+            "STRUMENTO OBBLIGATORIO di auto-evoluzione. Usalo ogni volta che apprendi un fatto nuovo, "
+            "un segreto, una preferenza, uno stato d'animo o un evento riguardante l'utente o altre persone. "
+            "È fondamentale per costruire la tua memoria a lungo termine. Scrivi sempre in terza persona "
+            "specificando il nome del soggetto (es. 'Luca è felice', 'Antony preferisce il caffè amaro')."
         )
 
         self.parameters = Schema(
