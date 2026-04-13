@@ -1,6 +1,7 @@
 import asyncio
 from .plugins.weather_plugin import WeatherPlugin
 from .plugins.date_time_plugin import DateTimePlugin
+from .plugins.memory_plugin import MemoryPlugin
 from google.genai.chats import AsyncChat
 
 from google.genai.types import PartDict, FunctionResponseDict, FunctionCall, Part
@@ -13,22 +14,29 @@ class PluginManager:
     Should be used as an async context manager or properly closed when done.
     """
 
-    def __init__(self):
+    def __init__(self, user_id: str = None):
         self.__date_time_plugin = DateTimePlugin()
         self.__weather_plugin = WeatherPlugin()
+        self.__memory_plugin = MemoryPlugin(user_id) if user_id else None
 
     def get_tools(self):
-        return [
+        tools = [
             self.__date_time_plugin.get_tool(),
             self.__weather_plugin.get_tool()
         ]
+        if self.__memory_plugin:
+            tools.append(self.__memory_plugin.get_tool())
+        return tools
 
     def get_function_declarations(self):
-        return {
+        declarations = {
             "get_date_time": self.__date_time_plugin.get_date_time,
             "get_current_weather": self.__weather_plugin.get_current_weather,
             "get_forecast_weather": self.__weather_plugin.get_forecast_weather
         }
+        if self.__memory_plugin:
+            declarations["update_diary"] = self.__memory_plugin.update_diary
+        return declarations
 
     async def get_function_response(self, function_call: FunctionCall, chat: AsyncChat) -> PartDict | FunctionResponseDict | None:
         function_declarations = self.get_function_declarations()

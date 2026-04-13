@@ -11,8 +11,9 @@ from .plugin_manager import PluginManager
 
 class Gemini:
     
-    def __init__(self, model_name: str = None, system_instruction: str = None):
-        self.__plugin_manager = PluginManager()
+    def __init__(self, model_name: str = None, system_instruction: str = None, user_id: str = None):
+        self.__user_id = user_id
+        self.__plugin_manager = PluginManager(user_id)
         
         self.__model_name = model_name or getenv('GEMINI_MODEL_NAME')
         self.__client = genai.Client(
@@ -84,6 +85,9 @@ class Gemini:
                 yield chunk.text
 
     async def send_message(self, prompt: str, chat: AsyncChat) -> str:
+        if self.__user_id:
+            prompt += "\n\n[SISTEMA: Valuta attentamente se usare il diario (aggiungi o modifica ricordi su questa persona) tramite il tool update_diary.]"
+
         function_request = await chat.send_message(prompt)
         
         print("Function Request: " + function_request.__str__())
@@ -106,27 +110,35 @@ class Gemini:
 
         return function_response.text
 
-    @staticmethod
-    async def send_image_stream(prompt: str, image: PIL.Image, chat: AsyncChat):
+    async def send_image_stream(self, prompt: str, image: PIL.Image, chat: AsyncChat):
+        if self.__user_id:
+            prompt += "\n\n[SISTEMA: Valuta attentamente se usare il diario (aggiungi o modifica ricordi su questa persona) tramite il tool update_diary.]"
+
         async for chunk in await chat.send_message_stream([prompt, image]):
             if chunk.text:
                 yield chunk.text
 
-    @staticmethod
-    async def send_image(prompt: str, image: PIL.Image, chat: AsyncChat) -> str:
+    async def send_image(self, prompt: str, image: PIL.Image, chat: AsyncChat) -> str:
+        if self.__user_id:
+            prompt += "\n\n[SISTEMA: Valuta attentamente se usare il diario (aggiungi o modifica ricordi su questa persona) tramite il tool update_diary.]"
+
         response = await chat.send_message([prompt, image])
         print("Image response: " + response.text)
         return response.text
 
-    @staticmethod
-    async def send_audio_stream(prompt: str, audio_bytes: bytes, mime_type: str, chat: AsyncChat):
+    async def send_audio_stream(self, prompt: str, audio_bytes: bytes, mime_type: str, chat: AsyncChat):
+        if self.__user_id:
+            prompt += "\n\n[SISTEMA: Valuta attentamente se usare il diario (aggiungi o modifica ricordi su questa persona) tramite il tool update_diary.]"
+
         audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
         async for chunk in await chat.send_message_stream([prompt, audio_part]):
             if chunk.text:
                 yield chunk.text
 
-    @staticmethod
-    async def send_audio(prompt: str, audio_bytes: bytes, mime_type: str, chat: AsyncChat) -> str:
+    async def send_audio(self, prompt: str, audio_bytes: bytes, mime_type: str, chat: AsyncChat) -> str:
+        if self.__user_id:
+            prompt += "\n\n[SISTEMA: Valuta attentamente se usare il diario (aggiungi o modifica ricordi su questa persona) tramite il tool update_diary.]"
+
         audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
         response = await chat.send_message([prompt, audio_part])
         print("Audio response: " + response.text)
@@ -136,7 +148,7 @@ class Gemini:
         """Genera una breve descrizione del contenuto di un'immagine."""
         prompt = "Descrivi brevemente cosa vedi in questa immagine in una sola frase, in italiano. Sii concisa e oggettiva."
         try:
-            response = await self.__client.models.generate_content(
+            response = await self.__client.aio.models.generate_content(
                 model=self.__model_name,
                 contents=[prompt, image],
                 config=types.GenerateContentConfig(
@@ -154,7 +166,7 @@ class Gemini:
         prompt = "Trascrivi il testo di questo audio se c'è qualcuno che parla, altrimenti descrivi brevemente i suoni che senti. Rispondi solo con la trascrizione o la descrizione, in italiano, in modo conciso."
         try:
             audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
-            response = await self.__client.models.generate_content(
+            response = await self.__client.aio.models.generate_content(
                 model=self.__model_name,
                 contents=[prompt, audio_part],
                 config=types.GenerateContentConfig(

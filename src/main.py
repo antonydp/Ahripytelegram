@@ -43,19 +43,21 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         # Understand better how to initialize outside the endpoint
         telegram_service = TelegramService()
-        gemini_chat = Gemini(model_name=getenv('GEMINI_CHAT_MODEL'))
-        gemini_decision = Gemini(
-            model_name=getenv('GEMINI_DECISION_MODEL'),
-            system_instruction="Sei un assistente che decide se il bot Ahri deve rispondere a un messaggio. Rispondi SOLO con un numero da 0 a 100."
-        )
 
         request.body = await request.json()
-
         telegram_update = Update.de_json(request.body, telegram_service._telegram_app_bot)
 
         message_obj = telegram_update.message or telegram_update.edited_message or telegram_update.channel_post or telegram_update.edited_channel_post
         if not message_obj:
             return 'OK'
+
+        user_id = message_obj.from_user.id if message_obj and message_obj.from_user else None
+
+        gemini_chat = Gemini(model_name=getenv('GEMINI_CHAT_MODEL'), user_id=str(user_id) if user_id else None)
+        gemini_decision = Gemini(
+            model_name=getenv('GEMINI_DECISION_MODEL'),
+            system_instruction="Sei un assistente che decide se il bot Ahri deve rispondere a un messaggio. Rispondi SOLO con un numero da 0 a 100."
+        )
 
         chat_id = message_obj.chat_id
         is_group = message_obj.chat.type in ['group', 'supergroup']
@@ -91,6 +93,7 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
         stmt = select(ChatMessage).where(
             ChatMessage.chat_id == chat_session.id,
+            ChatMessage.user_id == user_id,
             ChatMessage.role == 'user'
         ).order_by(ChatMessage.date.desc()).limit(1)
 
