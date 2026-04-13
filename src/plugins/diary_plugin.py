@@ -24,6 +24,27 @@ class DiaryPlugin:
             }
         )
 
+        # Nuovo strumento per aggiornare memorie esistenti
+        self.update_name: str = "update_diary"
+        self.update_description: str = (
+            "Usa questo strumento per CORREGGERE o AGGIORNARE un'informazione già esistente nel tuo diario. "
+            "Devi specificare l'ID della memoria che vuoi cambiare (lo trovi nel contesto del diario)."
+        )
+        self.update_parameters = Schema(
+            type=Type.OBJECT,
+            required=["entry_id", "new_memory"],
+            properties={
+                "entry_id": {
+                    "type": Type.INTEGER,
+                    "description": "L'ID numerico della memoria da aggiornare.",
+                },
+                "new_memory": {
+                    "type": Type.STRING,
+                    "description": "La nuova versione aggiornata del ricordo, sempre in terza persona con nomi propri.",
+                }
+            }
+        )
+
     def get_tool(self) -> Tool:
         return Tool(
             function_declarations=[
@@ -31,6 +52,11 @@ class DiaryPlugin:
                     name=self.name,
                     description=self.description,
                     parameters=self.parameters,
+                ),
+                FunctionDeclaration(
+                    name=self.update_name,
+                    description=self.update_description,
+                    parameters=self.update_parameters,
                 )
             ]
         )
@@ -52,3 +78,28 @@ class DiaryPlugin:
         except Exception as e:
             print(f"Errore salvataggio diario: {e}")
             return "Il ricordo è svanito prima di poterlo salvare."
+
+    async def update_diary(self, entry_id: int, new_memory: str, **kwargs) -> str:
+        """Aggiorna una memoria esistente nel DB. kwargs contiene db iniettato."""
+        db: AsyncSession = kwargs.get('db')
+        if not db:
+            return "Errore: Connessione alla Memoria Globale fallita."
+
+        try:
+            from sqlalchemy import update
+            from sqlalchemy import select
+
+            stmt = select(DiaryEntry).where(DiaryEntry.id == entry_id)
+            res = await db.execute(stmt)
+            entry = res.scalar_one_or_none()
+
+            if not entry:
+                return f"Non ho trovato alcun ricordo con ID {entry_id} nel mio diario."
+
+            entry.memory_text = new_memory
+            await db.commit()
+            print(f"Ahri ha aggiornato il ricordo {entry_id}: {new_memory}")
+            return f"Ricordo ID {entry_id} aggiornato con successo: {new_memory}"
+        except Exception as e:
+            print(f"Errore aggiornamento diario: {e}")
+            return "Non sono riuscita a cambiare quel ricordo, è impresso troppo profondamente."
