@@ -16,8 +16,12 @@ from src.enums import TelegramBotCommands
 from src.gemini import Gemini
 from src.services.database_service import AsyncSessionLocal
 from src.services.telegram_service import TelegramService
+import asyncio
 
 load_dotenv()
+
+# Stato globale per il raggruppamento dei messaggi (debouncing)
+last_message_at = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -61,6 +65,11 @@ async def process_telegram_message(request_data: dict):
                 return
 
             chat_id = message_obj.chat_id
+
+            # Debouncing logic: Update timestamp for this chat
+            my_timestamp = time.time()
+            last_message_at[chat_id] = my_timestamp
+
             is_group = message_obj.chat.type in ['group', 'supergroup']
             bot_user = await telegram_service.get_me()
             chat_service = ChatService()
@@ -79,7 +88,7 @@ async def process_telegram_message(request_data: dict):
                 await telegram_service.send_new_chat_message(chat_id=chat_id)
                 return
             
-            # Filtro anti-duplicati (se Telegram dovesse comunque forzare un reinvio)
+            # Filtro anti-duplicati
             tg_msg_date = message_obj.date.replace(tzinfo=timezone.utc) if message_obj.date.tzinfo is None else message_obj.date
             stmt = select(ChatMessage).where(ChatMessage.chat_id == chat_session.id, ChatMessage.role == 'user').order_by(ChatMessage.date.desc()).limit(1)
             res = await db.execute(stmt)
@@ -103,9 +112,29 @@ async def process_telegram_message(request_data: dict):
             raw_text = caption if not media_desc else (f"[{media_desc}] {caption}" if caption else media_desc)
             if not raw_text: raw_text = "ha inviato un media"
 
-            # Salvataggio messaggio utente
-            prompt = f"{user_name}: {raw_text}\n\n[SISTEMA: Considera attentamente se quanto appena detto merita di essere salvato nel diario o se richiede l'aggiornamento di un ricordo esistente tramite ID.]"
-            await chat_service.add_message(db, chat_session.id, prompt, message_obj.date, "user", user_id=user_id, username=username)
+            # Salvataggio messaggio utente nel DB immediato (testo pulito)
+            db_msg_text = f"{user_name}: {raw_text}"
+            await chat_service.add_message(db, chat_session.id, db_msg_text, message_obj.date, "user", user_id=user_id, username=username)
+
+            # Wait period for debouncing
+            await asyncio.sleep(3)
+            if last_message_at.get(chat_id) != my_timestamp:
+                return
+
+            # Aggregazione messaggi (Burst)
+            last_bot_msg = await chat_service.get_last_bot_message(db, chat_session.id)
+            stmt = select(ChatMessage).where(ChatMessage.chat_id == chat_session.id, ChatMessage.role == 'user')
+            if last_bot_msg:
+                stmt = stmt.where(ChatMessage.date > last_bot_msg.date)
+            stmt = stmt.order_by(ChatMessage.date.asc())
+
+            res_messages = await db.execute(stmt)
+            messages = res_messages.scalars().all()
+            num_messages_in_burst = len(messages)
+
+            # Costruiamo il prompt aggregato e aggiungiamo il reminder di sistema una sola volta
+            aggregated_text = "\n".join([m.text for m in messages])
+            prompt = f"{aggregated_text}\n\n[SISTEMA: Considera attentamente se quanto appena detto merita di essere salvato nel diario o se richiede l'aggiornamento di un ricordo esistente tramite ID.]"
 
             # Decisione per i Gruppi (Randomness)
             if is_group:
@@ -145,12 +174,13 @@ async def process_telegram_message(request_data: dict):
             
             if entries:
                 raw_notes = [f"[ID: {e.id}] {e.memory_text}" for e in entries]
-                # Estraiamo solo i segreti/ricordi pertinenti a QUESTO utente o a chi viene nominato
-                relevant_memory = await gemini_chat.extract_relevant_memories(user_name, raw_text, raw_notes)
+                # Estraiamo solo i segreti/ricordi pertinenti a QUESTO utente o a chi viene nominato (usando il burst aggregato)
+                relevant_memory = await gemini_chat.extract_relevant_memories(user_name, aggregated_text, raw_notes)
 
-            # Preparazione Chat History per Ahri
+            # Preparazione Chat History per Ahri (escludiamo l'intero burst attuale)
             full_history = await chat_service.get_chat_history(db, chat_session.id)
-            if full_history: full_history.pop() # Rimuoviamo l'ultimo perché lo passiamo come prompt
+            for _ in range(num_messages_in_burst):
+                if full_history: full_history.pop()
 
             # Creazione della chat (Iniezione STM + LTM)
             chat = gemini_chat.get_chat(
@@ -162,13 +192,30 @@ async def process_telegram_message(request_data: dict):
             
             await telegram_service._telegram_app_bot.send_chat_action(chat_id=chat_id, action="typing")
 
-            # Invio Messaggio a Gemini
-            if image: 
-                resp = await gemini_chat.send_image(prompt, image, chat, db=db, user_id=user_id)
-            elif audio_data: 
-                resp = await gemini_chat.send_audio(prompt, audio_data[0], audio_data[1], chat, db=db, user_id=user_id)
-            else: 
-                resp = await gemini_chat.send_message(prompt, chat, db=db, user_id=user_id)
+            # Invio Messaggio a Gemini con Fallback
+            try:
+                if image:
+                    resp = await gemini_chat.send_image(prompt, image, chat, db=db, user_id=user_id)
+                elif audio_data:
+                    resp = await gemini_chat.send_audio(prompt, audio_data[0], audio_data[1], chat, db=db, user_id=user_id)
+                else:
+                    resp = await gemini_chat.send_message(prompt, chat, db=db, user_id=user_id)
+            except Exception as e:
+                print(f"Errore chiamata Gemini: {e}. Provo il fallback al modello decisionale.")
+                # Fallback al modello decisionale (Gemma4 o equivalente configurato)
+                fallback_gemini = Gemini(is_decision_model=True)
+                fallback_chat = fallback_gemini.get_chat(
+                    history=full_history,
+                    user_name=user_name,
+                    username=username,
+                    memory_context=relevant_memory
+                )
+                if image:
+                    resp = await fallback_gemini.send_image(prompt, image, fallback_chat, db=db, user_id=user_id)
+                elif audio_data:
+                    resp = await fallback_gemini.send_audio(prompt, audio_data[0], audio_data[1], fallback_chat, db=db, user_id=user_id)
+                else:
+                    resp = await fallback_gemini.send_message(prompt, fallback_chat, db=db, user_id=user_id)
 
             # Salvataggio e Invio risposta
             if resp:
