@@ -101,7 +101,7 @@ async def process_telegram_message(request_data: dict):
 
             # 4. ATTESA BURST (Debouncing)
             # Aspettiamo che l'utente finisca di inviare messaggi a raffica
-            await asyncio.sleep(20.0)
+            await asyncio.sleep(10.0)
 
             # 5. CONTROLLO CENTRALIZZATO (DATABASE)
             # Verifichiamo se questo messaggio è ancora l'ultimo inviato dall'utente
