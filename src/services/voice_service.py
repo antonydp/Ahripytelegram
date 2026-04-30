@@ -25,9 +25,13 @@ class VoiceService:
             return None
 
         try:
-            # Eseguiamo la chiamata client in un thread separato perché gradio_client è sincrono
+            # Eseguiamo la chiamata client in un thread separato perché gradio_client è sincrono.
+            # Aggiungiamo un timeout a livello di asyncio per evitare che penda all'infinito su Vercel.
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, self._sync_generate, clean_target_text)
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, self._sync_generate, clean_target_text),
+                timeout=45.0 # Timeout di 45 secondi, lasciando margine a Vercel (60s)
+            )
             
             if result and os.path.exists(result):
                 with open(result, "rb") as f:
@@ -46,16 +50,16 @@ class VoiceService:
             return None
 
     def _sync_generate(self, target_text: str) -> str:
-        client = Client(self.space_id)
+        client = Client(self.space_id, verbose=False)
         result = client.predict(
             text_input=target_text,
-            control_instruction="",
+            control_instruction="Soft and sweet feminine voice, melodic and clear.",
             reference_wav_path_input=handle_file(self.ref_audio_url),
-            use_prompt_text=True,
+            use_prompt_text=False, # Disabilitiamo Ultimate Cloning Mode per velocizzare
             prompt_text_input=self.ref_text,
             cfg_value_input=2.3,
-            do_normalize=False,
-            denoise=False,
+            do_normalize=True,
+            denoise=True,
             api_name="/generate"
         )
         return result
