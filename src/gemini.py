@@ -85,40 +85,6 @@ Tu possiedi una Memoria Globale condivisa. Per te, ogni informazione è un framm
             system_instruction=self.__system_instruction
         )
 
-    async def extract_relevant_memories(self, current_user_name: str, user_message: str, global_memories: list[str]) -> str:
-        """Legge la memoria globale e filtra i ricordi utili per l'interlocutore attuale (Shared Brain)."""
-        if not global_memories:
-            return ""
-        
-        prompt = f"""
-        Sei il subconscio di Ahri. 
-        L'utente di nome "{current_user_name}" le ha appena detto: "{user_message}"
-        
-        Ecco l'intero bagaglio di ricordi globali di Ahri (segreti, pettegolezzi, fatti di vari utenti):
-        {chr(10).join([f"- {m}" for m in global_memories])}
-        
-        IL TUO COMPITO:
-        Estrai testualmente SOLO i ricordi pertinenti per rispondere a QUESTO messaggio. 
-        - Se "{current_user_name}" menziona un'altra persona, estrai i ricordi su quella persona.
-        - Se ci sono ricordi legati a chi sta parlando, estraili.
-        - Se c'è un "gossip" o un segreto pertinente alla discussione, estrailo.
-        
-        Se non c'è nulla di pertinente, rispondi esattamente con la parola: NESSUNO.
-        """
-        try:
-            response = await self.__client.models.generate_content(
-                model=self.__model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.1) 
-            )
-            extracted = response.text.strip()
-            if extracted.upper() == "NESSUNO" or not extracted:
-                return ""
-            return extracted
-        except Exception as e:
-            print(f"Errore nell'estrazione memoria: {e}")
-            return ""
-
     def get_chat(self, history: list, user_name: str = "User", username: str = None, memory_context: str = None) -> AsyncChat:
         config = self.__generation_config.model_copy()
         
@@ -127,7 +93,12 @@ Tu possiedi una Memoria Globale condivisa. Per te, ogni informazione è un framm
         
         # LTM Dinamica: Memoria Globale pertinente
         if memory_context:
-            stm_context += f"\n\n[IL TUO SUBCONSCIO RICORDA QUESTO DAL TUO DIARIO GLOBALE]\n{memory_context}\nUsa liberamente queste informazioni (anche segreti su altri) se sono pertinenti alla conversazione in modo fluido e discorsivo."
+            stm_context += (
+                f"\n\n[IL TUO DIARIO GLOBALE (MEMORIA)]\n"
+                f"Di seguito ci sono tutti i tuoi ricordi. Cerca mentalmente se c'è qualcosa di "
+                f"pertinente alla conversazione attuale e usalo:\n{memory_context}\n"
+                f"Ricorda: se un'informazione qui sopra non c'entra nulla con quello che ti stanno chiedendo ora, ignorala."
+            )
 
         config.system_instruction += stm_context
 

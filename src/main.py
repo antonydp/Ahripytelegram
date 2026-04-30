@@ -152,8 +152,8 @@ async def process_telegram_message(request_data: dict):
             res_diary = await db.execute(select(DiaryEntry).order_by(DiaryEntry.id.desc()).limit(150))
             entries = res_diary.scalars().all()
             if entries:
-                raw_notes = [f"[ID: {e.id}] {e.memory_text}" for e in entries]
-                relevant_memory = await gemini_chat.extract_relevant_memories(user_name, aggregated_text, raw_notes)
+                # Iniettiamo l'intero bagaglio di ricordi (max 150) direttamente nel prompt
+                relevant_memory = "\n".join([f"[ID: {e.id}] {e.memory_text}" for e in entries])
 
             # 9. PREPARAZIONE CONTESTO E INVIO
             full_history = await chat_service.get_chat_history(db, chat_session.id)
