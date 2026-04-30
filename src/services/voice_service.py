@@ -46,7 +46,7 @@ class VoiceService:
             return None
 
     def _sync_generate(self, target_text: str) -> str:
-        client = Client(self.space_id, hf_token=self.hf_token)
+        client = Client(self.space_id)
         result = client.predict(
             text_input=target_text,
             control_instruction="",
