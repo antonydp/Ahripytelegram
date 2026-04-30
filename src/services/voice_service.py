@@ -58,9 +58,11 @@ class VoiceService:
                     "data": [
                         file_data,          # Reference Audio
                         self.ref_text,      # Reference Text
-                        clean_target_text   # Target Text
+                        clean_target_text,  # Target Text
+                        "Language-Specific", # Prompt Mode
+                        "English"           # Target Language (lo Space sembra supportare multi-lingua)
                     ],
-                    "fn_index": 0,          # Cambia questo indice se lo Space ha aggiornato la sua UI
+                    "fn_index": 1,          # Cambiato da 0 a 1 per VoxCPM
                     "session_hash": session_hash
                 }
 
@@ -79,23 +81,23 @@ class VoiceService:
                                 event = json.loads(data_str)
                                 if event.get("msg") == "process_completed":
                                     if event.get("success"):
-                                        # DEBUG: Stampa l'intera risposta per capire la struttura
-                                        print(f"DEBUG TTS SUCCESS: {json.dumps(event, indent=2)}")
+                                        # Il risultato finale deve contenere un oggetto con "orig_name" o un dizionario FileData
+                                        # Gli eventi precedenti con "update" vanno saltati
+                                        for output_data in event["output"]["data"]:
+                                            if isinstance(output_data, dict) and output_data.get("meta", {}).get("_type") == "gradio.FileData":
+                                                output_file = output_data["url"]
+                                                # 5. Scarichiamo l'audio generato
+                                                final_audio_resp = await client.get(output_file)
+                                                final_audio_resp.raise_for_status()
+                                                return final_audio_resp.content
+                                            elif isinstance(output_data, dict) and "url" in output_data:
+                                                output_file = output_data["url"]
+                                                final_audio_resp = await client.get(output_file)
+                                                final_audio_resp.raise_for_status()
+                                                return final_audio_resp.content
                                         
-                                        # Il risultato è nel campo output.data[0] (dipende dall'output dello space)
-                                        output_data = event["output"]["data"][0]
-                                        if isinstance(output_data, dict) and "url" in output_data:
-                                            output_file = output_data["url"]
-                                        elif isinstance(output_data, str):
-                                            output_file = output_data
-                                        else:
-                                            print(f"Formato output non riconosciuto: {output_data}")
-                                            return None
-                                        
-                                        # 5. Scarichiamo l'audio generato
-                                        final_audio_resp = await client.get(output_file)
-                                        final_audio_resp.raise_for_status()
-                                        return final_audio_resp.content
+                                        print(f"Nessun file audio trovato nell'output finale: {event}")
+                                        return None
                                     else:
                                         print(f"Errore generazione TTS: {event}")
                                         return None
