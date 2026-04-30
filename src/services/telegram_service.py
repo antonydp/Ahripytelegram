@@ -140,3 +140,19 @@ class TelegramService:
             bytes_array = await file.download_as_bytearray()
             return bytes(bytes_array), mime_type
         return None
+
+    async def send_voice(self, chat_id: int, voice: bytes, caption: str = None, reply_to_message_id: int = None, **kwargs) -> Coroutine[Message]:
+        """Send a voice message to the user.
+
+        Args:
+            chat_id: The chat ID to send the message to.
+            voice: The voice file as bytes.
+            caption: Optional caption for the voice message.
+        """
+        return await self._telegram_app_bot.send_voice(
+            chat_id=chat_id, 
+            voice=voice, 
+            caption=caption, 
+            reply_to_message_id=reply_to_message_id, 
+            **kwargs
+        )

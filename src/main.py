@@ -17,6 +17,7 @@ from src.enums import TelegramBotCommands
 from src.gemini import Gemini
 from src.services.database_service import AsyncSessionLocal
 from src.services.telegram_service import TelegramService
+from src.services.voice_service import VoiceService
 
 load_dotenv()
 
@@ -184,10 +185,33 @@ async def process_telegram_message(request_data: dict):
                 fallback_gemini = Gemini(is_decision_model=True)
                 resp = await fallback_gemini.send_message(aggregated_text, fallback_gemini.get_chat(full_history))
 
-            # 10. RISPOSTA FINALE
+            # 10. RISPOSTA FINALE E GENERAZIONE VOCE
             if resp:
+                # Salviamo comunque la risposta testuale nel database per la History di Gemini
                 await chat_service.add_message(db, chat_session.id, resp, datetime.now(timezone.utc), "model")
-                await telegram_service.send_message(chat_id=chat_id, text=resp, reply_to_message_id=message_obj.message_id)
+                
+                # Invia lo stato "sto registrando un vocale..." su Telegram
+                await telegram_service._telegram_app_bot.send_chat_action(chat_id=chat_id, action="record_voice")
+                
+                # Genera l'audio
+                voice_service = VoiceService()
+                audio_bytes = await voice_service.generate_voice(resp)
+                
+                if audio_bytes:
+                    # Invia il messaggio vocale (con il testo come caption opzionale, o da solo)
+                    await telegram_service.send_voice(
+                        chat_id=chat_id, 
+                        voice=audio_bytes, 
+                        caption=resp, # Se non vuoi il testo scritto, metti caption=None
+                        reply_to_message_id=message_obj.message_id
+                    )
+                else:
+                    # Fallback: se la generazione vocale fallisce, invia come testo normale
+                    await telegram_service.send_message(
+                        chat_id=chat_id, 
+                        text=resp, 
+                        reply_to_message_id=message_obj.message_id
+                    )
 
         except Exception as error:
             print(f"Global Error: {error}")
