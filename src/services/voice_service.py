@@ -51,18 +51,27 @@ class VoiceService:
                 # 3. Ci uniamo alla coda di generazione
                 session_hash = uuid.uuid4().hex
                 
-                # NOTA: fn_index e la struttura di "data" dipendono dallo Space.
-                # Solitamente l'ordine è [Audio di riferimento, Testo di riferimento, Testo da generare]
-                # Se l'API restituisce errore, controlla l'endpoint /config dello space per l'ordine esatto.
+                # Basato sulla documentazione API di VoxCPM:
+                # [0] target_text: string
+                # [1] control_instruction: string (vuoto per Ultimate Cloning)
+                # [2] reference_audio: FileData
+                # [3] ultimate_cloning_mode: boolean (true)
+                # [4] transcript: string (testo di Ahri)
+                # [5] cfg: number (2.3)
+                # [6] reference_enhancement: boolean (false)
+                # [7] text_normalization: boolean (false)
                 payload = {
                     "data": [
-                        file_data,          # Reference Audio
-                        self.ref_text,      # Reference Text
-                        clean_target_text,  # Target Text
-                        "Language-Specific", # Prompt Mode
-                        "English"           # Target Language (lo Space sembra supportare multi-lingua)
+                        clean_target_text,  # [0] Target Text
+                        "",                 # [1] Control Instruction
+                        file_data,          # [2] Reference Audio
+                        True,               # [3] Ultimate Cloning Mode
+                        self.ref_text,      # [4] Transcript of Reference Audio
+                        2.3,                # [5] CFG
+                        False,              # [6] Reference audio enhancement
+                        False               # [7] Text normalization
                     ],
-                    "fn_index": 1,          # Cambiato da 0 a 1 per VoxCPM
+                    "fn_index": 0,          # L'endpoint principale /generate è fn_index 0
                     "session_hash": session_hash
                 }
 
