@@ -79,8 +79,18 @@ class VoiceService:
                                 event = json.loads(data_str)
                                 if event.get("msg") == "process_completed":
                                     if event.get("success"):
+                                        # DEBUG: Stampa l'intera risposta per capire la struttura
+                                        print(f"DEBUG TTS SUCCESS: {json.dumps(event, indent=2)}")
+                                        
                                         # Il risultato è nel campo output.data[0] (dipende dall'output dello space)
-                                        output_file = event["output"]["data"][0]["url"] 
+                                        output_data = event["output"]["data"][0]
+                                        if isinstance(output_data, dict) and "url" in output_data:
+                                            output_file = output_data["url"]
+                                        elif isinstance(output_data, str):
+                                            output_file = output_data
+                                        else:
+                                            print(f"Formato output non riconosciuto: {output_data}")
+                                            return None
                                         
                                         # 5. Scarichiamo l'audio generato
                                         final_audio_resp = await client.get(output_file)
